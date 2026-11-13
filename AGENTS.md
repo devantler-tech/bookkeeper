@@ -22,7 +22,7 @@ the owner. Booking, reconciliation and VAT stay in Numina.
 - `charts/bookkeeper` — the Helm chart (CronJob, ServiceAccount, values schema).
 - `CLAUDE.md` / `GEMINI.md` — exact one-line `@AGENTS.md` shims; never copy guidance into them.
 - `.claude/skills/maintain/SKILL.md` — the maintenance skill card; it defers to *Maintenance* below.
-- `.github/workflows/` — `ci.yaml` (required checks), `cd.yaml` (GoReleaser on `v*` tags), `release.yaml`, `template-sync.yaml` (weekly sync of template-owned plumbing from `devantler-tech/go-template`, honouring `.templatesyncignore`), `todos.yaml`, `stale-issues.yaml`.
+- `.github/workflows/` — `ci.yaml` (required checks), `cd.yaml` (GoReleaser binaries on `v*` tags), `publish.yaml` (on `v*` tags: the ko-built image and the Helm chart to GHCR, both signed keylessly, the chart pinned to the image digest; `.ko.yaml` sets the base image), `release.yaml`, `template-sync.yaml` (weekly sync of template-owned plumbing from `devantler-tech/go-template`, honouring `.templatesyncignore`), `todos.yaml`, `stale-issues.yaml`.
 
 ## Validation
 
