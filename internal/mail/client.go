@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 const (
@@ -24,6 +25,8 @@ const (
 	maxAnswerBytes = 16 << 20
 	// methodResponseParts is the length of a JMAP invocation: name, arguments and call ID.
 	methodResponseParts = 3
+	// fixedConditions counts a query's conditions besides its keywords: the mailbox and the time.
+	fixedConditions = 2
 )
 
 var (
@@ -155,11 +158,13 @@ func (c *Client) Mailboxes(ctx context.Context) ([]Mailbox, error) {
 	return out.List, err
 }
 
-// Query returns the IDs of the oldest mails in a mailbox that have attachments and carry none of
-// skipKeywords, at most limit of them and never more than one Email/get can read.
+// Query returns the IDs of the oldest mails in a mailbox that were received at or after since,
+// have attachments and carry none of skipKeywords: at most limit of them, and never more than one
+// Email/get can read. A zero since reads mail of any age.
 func (c *Client) Query(
 	ctx context.Context,
 	mailboxID string,
+	since time.Time,
 	skipKeywords []string,
 	limit int,
 ) ([]string, error) {
@@ -172,9 +177,14 @@ func (c *Client) Query(
 	}
 
 	// One condition holds one notKeyword, so an AND operator joins them (RFC 8620 section 5.5).
-	conditions := make([]any, 0, 1+len(skipKeywords))
+	conditions := make([]any, 0, fixedConditions+len(skipKeywords))
 
 	conditions = append(conditions, map[string]any{"inMailbox": mailboxID, "hasAttachment": true})
+	if !since.IsZero() {
+		// after matches a receivedAt equal to or later than this UTCDate (RFC 8621 section 4.4.1).
+		conditions = append(conditions, map[string]any{"after": since.UTC().Format(time.RFC3339)})
+	}
+
 	for _, keyword := range skipKeywords {
 		conditions = append(conditions, map[string]any{"notKeyword": keyword})
 	}

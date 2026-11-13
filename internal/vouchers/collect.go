@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"path"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/devantler-tech/bookkeeper/internal/mail"
@@ -46,7 +47,13 @@ var (
 type Mailbox interface {
 	Connect(ctx context.Context) error
 	Mailboxes(ctx context.Context) ([]mail.Mailbox, error)
-	Query(ctx context.Context, mailboxID string, skipKeywords []string, limit int) ([]string, error)
+	Query(
+		ctx context.Context,
+		mailboxID string,
+		since time.Time,
+		skipKeywords []string,
+		limit int,
+	) ([]string, error)
 	Emails(ctx context.Context, ids []string) ([]mail.Email, error)
 	Flag(ctx context.Context, emailID, keyword string) error
 	Download(ctx context.Context, part mail.Part, limit int64) ([]byte, error)
@@ -63,8 +70,9 @@ type Inbox interface {
 
 // Options says where to read and how much.
 type Options struct {
-	Folder string // the folder to read; empty means the inbox
-	Limit  int    // the most mails one run reads
+	Folder string    // the folder to read; empty means the inbox
+	Limit  int       // the most mails one run reads
+	Since  time.Time // only mail received at or after this time is read; zero means all of it
 }
 
 // Summary holds counts only: no sender, subject, file name or amount reaches the logs.
@@ -145,8 +153,8 @@ func handle(
 	return SentKeyword, failed
 }
 
-// unhandledMail reads the mails in the configured folder that have attachments and carry neither
-// SentKeyword nor NotInvoiceKeyword.
+// unhandledMail reads the mails in the configured folder, received since opt.Since, that have
+// attachments and carry neither SentKeyword nor NotInvoiceKeyword.
 func unhandledMail(ctx context.Context, box Mailbox, opt Options) ([]mail.Email, error) {
 	err := box.Connect(ctx)
 	if err != nil {
@@ -163,7 +171,13 @@ func unhandledMail(ctx context.Context, box Mailbox, opt Options) ([]mail.Email,
 		return nil, err
 	}
 
-	ids, err := box.Query(ctx, source, []string{SentKeyword, NotInvoiceKeyword}, opt.Limit)
+	ids, err := box.Query(
+		ctx,
+		source,
+		opt.Since,
+		[]string{SentKeyword, NotInvoiceKeyword},
+		opt.Limit,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("find mail: %w", err)
 	}

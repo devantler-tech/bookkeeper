@@ -17,10 +17,12 @@ kubectl create secret generic bookkeeper \
 helm install bookkeeper oci://ghcr.io/devantler-tech/charts/bookkeeper \
   --set mail.url=https://mail.example.com \
   --set mail.user=you@example.com \
+  --set since=2026-01-01 \
   --set existingSecret.name=bookkeeper
 ```
 
-Each run looks at mail in the inbox that has attachments and that it has not handled before:
+Each run looks at mail in the inbox, received on or after `since`, that has attachments and that it
+has not handled before:
 
 - **An invoice** — "invoice", "faktura", "receipt", "kvittering", "regning" or "bilag" in the
   subject or a file name. Its PDF, PNG or JPEG attachments go to Numina's inbox with OCR, and the
@@ -44,6 +46,7 @@ caught by Numina's own missing-voucher reminder.
 | `mail.folder` | Folder to read; empty means the inbox | `""` |
 | `existingSecret.name` | Secret holding the keys `mail-password` and `numina-api-key` | required |
 | `schedule`, `timeZone` | When it runs | `15 6 * * *`, `Europe/Copenhagen` |
+| `since` | Only mail received on or after this day (`YYYY-MM-DD`) is read; set it to the first day of the books in Numina | required |
 | `limit` | The most mails one run reads, 1–500 | `100` |
 | `image.digest` | Pin the exact image | `""` |
 
@@ -51,7 +54,7 @@ Without Kubernetes:
 
 ```bash
 bookkeeper collect-vouchers --mail-url https://mail.example.com --mail-user you@example.com \
-  --mail-password-file ./mail-password --numina-token-file ./numina-api-key
+  --mail-password-file ./mail-password --numina-token-file ./numina-api-key --since 2026-01-01
 ```
 
 ## What it needs

@@ -32,16 +32,19 @@ const (
 	maxLimit     = 500
 	// httpTimeout bounds one HTTP exchange with the mail server or Numina.
 	httpTimeout = 60 * time.Second
+	// dayLayout is how --since names a day; it parses to that day's midnight in UTC.
+	dayLayout = "2006-01-02"
 )
 
 const usage = `Usage: bookkeeper collect-vouchers --mail-url <https://mail.example.com> --mail-user <user>
-	--mail-password-file <path> --numina-token-file <path> [flags]`
+	--mail-password-file <path> --numina-token-file <path> --since <YYYY-MM-DD> [flags]`
 
 var (
 	errURLRequired      = errors.New("is required")
 	errURLNoHost        = errors.New("must be a full URL such as https://mail.example.com")
 	errURLNotHTTPS      = errors.New("must use HTTPS")
 	errUserOrLimit      = errors.New("--mail-user is required and --limit must be 1-500")
+	errSince            = errors.New("--since is required, as a day such as 2026-01-01")
 	errNoSecretFile     = errors.New("no file given")
 	errSecretUnreadable = errors.New("the file cannot be read")
 	errSecretNotOneLine = errors.New("the file must hold exactly one line")
@@ -57,6 +60,8 @@ type options struct {
 	numinaTokenFile  string
 	folder           string
 	limit            int
+	sinceDay         string    // --since as given
+	since            time.Time // sinceDay's midnight in UTC, set by validate
 }
 
 // credentials are the secrets read from the files the flags name.
@@ -115,6 +120,12 @@ func parseFlags(args []string, output io.Writer) (options, error) {
 	)
 	flags.StringVar(&opts.folder, "folder", "", "folder to read; empty means the inbox")
 	flags.IntVar(&opts.limit, "limit", defaultLimit, "the most mails one run reads (1-500)")
+	flags.StringVar(
+		&opts.sinceDay,
+		"since",
+		"",
+		"read only mail received on or after this day, as YYYY-MM-DD in UTC",
+	)
 
 	err := flags.Parse(args)
 	if err != nil {
@@ -124,8 +135,9 @@ func parseFlags(args []string, output io.Writer) (options, error) {
 	return opts, nil
 }
 
-// validate checks the flags that need no file read, in the order a user would fix them.
-func (o options) validate() error {
+// validate checks the flags that need no file read, in the order a user would fix them, and
+// reads the --since day into since.
+func (o *options) validate() error {
 	err := checkURL(o.mailURL)
 	if err != nil {
 		return fmt.Errorf("--mail-url %w", err)
@@ -139,6 +151,14 @@ func (o options) validate() error {
 	if o.mailUser == "" || o.limit < minLimit || o.limit > maxLimit {
 		return errUserOrLimit
 	}
+
+	// Without a first day, a migrated mailbox would send years of old invoices to Numina.
+	since, err := time.Parse(dayLayout, o.sinceDay)
+	if err != nil {
+		return errSince
+	}
+
+	o.since = since
 
 	return nil
 }
@@ -172,7 +192,7 @@ func collectVouchers(
 ) int {
 	box := mail.New(opts.mailURL, opts.mailUser, creds.mailPassword, httpClient)
 	inbox := numina.New(opts.numinaURL, creds.numinaToken, httpClient)
-	opt := vouchers.Options{Folder: opts.folder, Limit: opts.limit}
+	opt := vouchers.Options{Folder: opts.folder, Limit: opts.limit, Since: opts.since}
 
 	sum, err := vouchers.Collect(ctx, box, inbox, opt, log)
 	if err != nil {

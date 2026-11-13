@@ -52,6 +52,7 @@ spec:
                 - --numina-token-file=/run/secrets/bookkeeper/numina-api-key
                 - {{ printf "--folder=%s" .Values.mail.folder | quote }}
                 - {{ printf "--limit=%d" (int .Values.limit) | quote }}
+                - {{ printf "--since=%s" .Values.since | quote }}
               securityContext:
                 {{- toYaml .Values.securityContext | nindent 16 }}
               resources:

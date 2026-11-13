@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/devantler-tech/bookkeeper/internal/mail"
 	"github.com/devantler-tech/bookkeeper/internal/numina"
@@ -29,6 +30,11 @@ func pdfData() []byte {
 	return append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("x"), 100)...)
 }
 
+// firstDay is the first day of the books the tests read from.
+func firstDay() time.Time {
+	return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+}
+
 // pngData is a PNG large enough to be a receipt photo rather than a logo.
 func pngData() []byte {
 	return append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte("x"), 20<<10)...)
@@ -44,6 +50,7 @@ type fakeBox struct {
 	failFlag  bool
 	flagged   map[string]string
 	queriedIn string
+	since     time.Time
 	skipped   []string
 }
 
@@ -58,6 +65,7 @@ func newBox(emails ...mail.Email) *fakeBox {
 		failFlag:  false,
 		flagged:   map[string]string{},
 		queriedIn: "",
+		since:     time.Time{},
 		skipped:   nil,
 	}
 }
@@ -67,10 +75,11 @@ func (b *fakeBox) Mailboxes(context.Context) ([]mail.Mailbox, error) { return b.
 func (b *fakeBox) Query(
 	_ context.Context,
 	mailboxID string,
+	since time.Time,
 	skip []string,
 	limit int,
 ) ([]string, error) {
-	b.queriedIn, b.skipped = mailboxID, skip
+	b.queriedIn, b.since, b.skipped = mailboxID, since, skip
 
 	ids := make([]string, 0, len(b.emails))
 	for _, e := range b.emails {
@@ -152,7 +161,9 @@ func collect(
 ) (vouchers.Summary, string) {
 	t.Helper()
 
-	return collectWith(t, box, inbox, vouchers.Options{Folder: folder, Limit: 100})
+	opt := vouchers.Options{Folder: folder, Limit: 100, Since: firstDay()}
+
+	return collectWith(t, box, inbox, opt)
 }
 
 func collectWith(
@@ -214,9 +225,9 @@ func TestInvoiceIsUploadedAndFlagged(t *testing.T) {
 		t.Fatalf("uploads %v flagged %v", inbox.uploads, box.flagged)
 	}
 
-	if box.queriedIn != "in" ||
+	if box.queriedIn != "in" || !box.since.Equal(firstDay()) ||
 		!slices.Equal(box.skipped, []string{vouchers.SentKeyword, vouchers.NotInvoiceKeyword}) {
-		t.Fatalf("queried %q skipping %q", box.queriedIn, box.skipped)
+		t.Fatalf("queried %q since %v skipping %q", box.queriedIn, box.since, box.skipped)
 	}
 }
 
@@ -305,7 +316,7 @@ func TestNewerInvoiceIsReachedPastMoreThanLimitOtherMails(t *testing.T) {
 	})...)
 	box.blobs["news"], box.blobs["b1"] = pdf, pdf
 	inbox := newInbox()
-	opt := vouchers.Options{Folder: "", Limit: limit}
+	opt := vouchers.Options{Folder: "", Limit: limit, Since: firstDay()}
 
 	// The first run fills its window with other mail; the second must still reach the invoice.
 	first, _ := collectWith(t, box, inbox, opt)
@@ -433,7 +444,7 @@ func TestNamedFolder(t *testing.T) {
 		context.Background(),
 		box,
 		newInbox(),
-		vouchers.Options{Folder: "Missing", Limit: 1},
+		vouchers.Options{Folder: "Missing", Limit: 1, Since: firstDay()},
 		slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
 	)
 	if err == nil {

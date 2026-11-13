@@ -21,6 +21,10 @@ numina:
 
 limit: 100
 
+# Required: only mail received on or after this day (YYYY-MM-DD, UTC) is read. Set it to the first
+# day of the books in Numina, so older mail never reaches the books.
+since: ""
+
 # An existing Secret with the mail password and the Numina API key. The chart never creates it,
 # so it can come from an external secret store.
 existingSecret:

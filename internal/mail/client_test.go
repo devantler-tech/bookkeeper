@@ -3,11 +3,13 @@ package mail_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/devantler-tech/bookkeeper/internal/jmaptest"
 	"github.com/devantler-tech/bookkeeper/internal/mail"
@@ -223,7 +225,10 @@ func checkMailboxes(ctx context.Context, t *testing.T, client *mail.Client) {
 func checkQuery(ctx context.Context, t *testing.T, fake *fakeServer, client *mail.Client) {
 	t.Helper()
 
-	ids, err := client.Query(ctx, "in", []string{"$bk-sent", "$bk-skip"}, 50)
+	// Midnight in Copenhagen in winter is 23:00 UTC the day before; the server gets UTC.
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("CET", 60*60))
+
+	ids, err := client.Query(ctx, "in", since, []string{"$bk-sent", "$bk-skip"}, 50)
 	if err != nil || len(ids) != 2 || fake.lastArgs["limit"] != float64(50) {
 		t.Fatalf("Query: %v %v %v", ids, err, fake.lastArgs)
 	}
@@ -231,6 +236,7 @@ func checkQuery(ctx context.Context, t *testing.T, fake *fakeServer, client *mai
 	// json.Marshal sorts map keys, so the filter has one exact form.
 	filter, err := json.Marshal(fake.lastArgs["filter"])
 	if err != nil || string(filter) != `{"conditions":[{"hasAttachment":true,"inMailbox":"in"},`+
+		`{"after":"2025-12-31T23:00:00Z"},`+
 		`{"notKeyword":"$bk-sent"},{"notKeyword":"$bk-skip"}],"operator":"AND"}` {
 		t.Fatalf("Query filter %s", filter)
 	}
@@ -240,14 +246,16 @@ func TestQueryNeverAsksForMoreThanOneEmailGetReads(t *testing.T) {
 	t.Parallel()
 
 	// The server's maxObjectsInGet caps the query; a missing or unusable value leaves it as asked.
+	// A zero since sets no time bound.
 	for limit, wants := range map[any]float64{
 		2: 2, 500: 50, nil: 50, 0: 50, -1: 50, 2.5: 50, "2": 50,
 	} {
 		fake := newServer(t)
 		fake.maxObjectsInGet = limit
 
-		_, err := connected(t, fake).Query(context.Background(), "in", nil, 50)
-		if err != nil || fake.lastArgs["limit"] != wants {
+		_, err := connected(t, fake).Query(context.Background(), "in", time.Time{}, nil, 50)
+		if err != nil || fake.lastArgs["limit"] != wants ||
+			strings.Contains(fmt.Sprint(fake.lastArgs["filter"]), "after") {
 			t.Errorf("maxObjectsInGet %v: %v, want limit %v (%v)", limit, fake.lastArgs, wants, err)
 		}
 	}

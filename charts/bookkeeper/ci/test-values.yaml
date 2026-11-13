@@ -1,5 +1,6 @@
 mail:
   url: https://mail.example.com
   user: invoices@example.com
+since: "2026-01-01"
 existingSecret:
   name: bookkeeper

@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/devantler-tech/bookkeeper/internal/jmaptest"
 )
@@ -118,7 +120,16 @@ func args(mailURL, numinaURL, password, token string, extra ...string) []string 
 		numinaURL,
 		"--numina-token-file",
 		token,
+		"--since",
+		"2026-01-01",
 	}, extra...)
+}
+
+// withoutSince drops --since and its day from a command line.
+func withoutSince(cmdline []string) []string {
+	at := slices.Index(cmdline, "--since")
+
+	return slices.Delete(cmdline, at, at+2)
 }
 
 func TestCollectVouchersEndToEnd(t *testing.T) {
@@ -183,6 +194,8 @@ func TestRefusals(t *testing.T) {
 		"two-line secret":  args("https://m", "https://n", secret(t, "a\nb\n"), token),
 		"token with space": args("https://m", "https://n", password, secret(t, "a b")),
 		"missing file":     args("https://m", "https://n", "/nonexistent", token),
+		"no since":         withoutSince(args("https://m", "https://n", password, token)),
+		"since not a day":  args("https://m", "https://n", password, token, "--since=2026-13-01"),
 	}
 	// Plain HTTP to a host that only starts like this machine, or a URL with no host.
 	for _, bad := range []string{
@@ -210,6 +223,41 @@ func TestRefusals(t *testing.T) {
 				t.Fatalf("exit %d\n%s", code, out.String())
 			}
 		})
+	}
+}
+
+func TestSinceMustBeADay(t *testing.T) {
+	t.Parallel()
+
+	for day, want := range map[string]error{
+		"2026-01-01":           nil,
+		"":                     errSince,
+		"2026-13-01":           errSince,
+		"2026-02-30":           errSince,
+		"2026-1-1":             errSince,
+		"01-02-2026":           errSince,
+		"2026-01-01T00:00:00Z": errSince,
+	} {
+		cmdline := args("https://m", "https://n", "p", "t", "--since", day)
+
+		opts, err := parseFlags(cmdline[1:], io.Discard)
+		if err == nil {
+			err = opts.validate()
+		}
+
+		if !errors.Is(err, want) {
+			t.Errorf("--since %q: %v, want %v", day, err, want)
+		}
+	}
+
+	// A valid day passes through as its midnight in UTC.
+	opts, _ := parseFlags(withoutSince(args("https://m", "https://n", "p", "t"))[1:], io.Discard)
+	opts.sinceDay = "2026-03-31"
+
+	err := opts.validate()
+	if err != nil || !opts.since.Equal(time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)) ||
+		opts.since.Location() != time.UTC {
+		t.Fatalf("since %v (%v)", opts.since, err)
 	}
 }
 
