@@ -1,0 +1,3 @@
+# ko builds the release image straight from the Go source. The base runs as the non-root user
+# 65532, which the chart's security context expects.
+defaultBaseImage: cgr.dev/chainguard/static

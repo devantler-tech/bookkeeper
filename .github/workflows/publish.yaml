@@ -1,0 +1,98 @@
+---
+# Publishes what the Helm chart installs, on every release tag: the container image and the chart
+# itself, both to GHCR and both signed keylessly by this workflow. The packaged chart pins the
+# exact image digest it was released with.
+name: Publish image and chart
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish signed image and chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the tagged source
+      packages: write # push the image and the chart to GHCR
+      id-token: write # sign both with the workflow's keyless Sigstore identity
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # No module cache in a release job, so a poisoned cache cannot reach the image.
+          cache: false
+
+      - name: 📦 Setup ko
+        uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
+        with:
+          version: v0.19.1
+
+      - name: 🔏 Install Cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: 🚀 Build, sign and publish
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::not a release tag: $RELEASE_TAG"
+            exit 1
+          fi
+          version="${RELEASE_TAG#v}"
+          identity="https://github.com/${GITHUB_WORKFLOW_REF}"
+          issuer="https://token.actions.githubusercontent.com"
+          printf '%s' "$GHCR_TOKEN" | cosign login ghcr.io --username "$GHCR_USER" --password-stdin
+          printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io --username "$GHCR_USER" --password-stdin
+
+          # The image, for both architectures. setup-ko points KO_DOCKER_REPO at this repository.
+          image=$(ko build . --bare --tags "$version" --platform linux/amd64,linux/arm64 \
+            --image-label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}")
+          digest="${image##*@}"
+          if [[ "${image%%@*}" != "ghcr.io/devantler-tech/bookkeeper:${version}" ]] ||
+            [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::ko did not return the tagged image with its digest"
+            exit 1
+          fi
+          image="ghcr.io/devantler-tech/bookkeeper@${digest}"
+          cosign sign --yes "$image"
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$image" >/dev/null
+
+          # The chart, pinned to exactly that image.
+          DIGEST="$digest" yq -i '.image.digest = strenv(DIGEST)' charts/bookkeeper/values.yaml
+          if [[ "$(yq '.image.digest' charts/bookkeeper/values.yaml)" != "$digest" ]]; then
+            echo "::error::could not pin the image digest in the chart"
+            exit 1
+          fi
+          helm package charts/bookkeeper --version "$version" --app-version "$version"
+          push_output=$(helm push "bookkeeper-${version}.tgz" oci://ghcr.io/devantler-tech/charts 2>&1)
+          printf '%s\n' "$push_output"
+          chart_digest=$(printf '%s\n' "$push_output" | awk '$1 == "Digest:" {print $2}')
+          if [[ ! "$chart_digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::helm push returned no chart digest"
+            exit 1
+          fi
+          chart="ghcr.io/devantler-tech/charts/bookkeeper@${chart_digest}"
+          cosign sign --yes "$chart"
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$chart" >/dev/null
+
+          {
+            echo "### Published ${RELEASE_TAG}"
+            echo "- Image: \`${image}\`"
+            echo "- Chart: \`oci://ghcr.io/devantler-tech/charts/bookkeeper\` ${version} (\`${chart_digest}\`)"
+          } >>"$GITHUB_STEP_SUMMARY"
