@@ -1,0 +1,85 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "bookkeeper.fullname" . }}
+  labels:
+    {{- include "bookkeeper.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  {{- with .Values.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  suspend: {{ .Values.suspend }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            {{- include "bookkeeper.labels" . | nindent 12 }}
+            {{- with .Values.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "bookkeeper.fullname" . }}
+          automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: bookkeeper
+              image: {{ include "bookkeeper.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - collect-vouchers
+                - {{ printf "--mail-url=%s" .Values.mail.url | quote }}
+                - {{ printf "--mail-user=%s" .Values.mail.user | quote }}
+                - --mail-password-file=/run/secrets/bookkeeper/mail-password
+                - {{ printf "--numina-url=%s" .Values.numina.url | quote }}
+                - --numina-token-file=/run/secrets/bookkeeper/numina-api-key
+                - {{ printf "--folder=%s" .Values.mail.folder | quote }}
+                - {{ printf "--limit=%d" (int .Values.limit) | quote }}
+                - {{ printf "--since=%s" .Values.since | quote }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: secrets
+                  mountPath: /run/secrets/bookkeeper
+                  readOnly: true
+          volumes:
+            - name: secrets
+              secret:
+                secretName: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
+                defaultMode: 0400
+                items:
+                  - key: {{ .Values.existingSecret.mailPasswordKey }}
+                    path: mail-password
+                  - key: {{ .Values.existingSecret.numinaApiKeyKey }}
+                    path: numina-api-key
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

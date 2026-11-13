@@ -1,6 +1,6 @@
 ---
 name: maintain
-description: Repository maintenance for devantler-tech/go-template — triage, dependency/toolchain hygiene, CI health, and keeping the scaffold a clean current buildable template. Use when performing autonomous or on-request maintenance of this repo.
+description: Repository maintenance for devantler-tech/bookkeeper — triage, dependency and toolchain hygiene, CI health and the Helm chart. Use when performing autonomous or on-request maintenance of this repo.
 ---
 
 # maintain

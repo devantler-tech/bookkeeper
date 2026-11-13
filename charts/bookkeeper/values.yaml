@@ -1,0 +1,54 @@
+# The container image. Set digest to pin an exact, verified build.
+image:
+  repository: ghcr.io/devantler-tech/bookkeeper
+  tag: "" # defaults to the chart's appVersion
+  digest: "" # for example sha256:...
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# When the collector runs, in cron syntax and the given time zone.
+schedule: "15 6 * * *"
+timeZone: Europe/Copenhagen
+suspend: false
+
+mail:
+  url: "" # base URL of the JMAP server, for example https://mail.example.com
+  user: "" # the mailbox your suppliers send invoices to
+  folder: "" # folder to read; empty means the inbox
+
+numina:
+  url: https://api.numina.app
+
+limit: 100
+
+# Required: only mail received on or after this day (YYYY-MM-DD, UTC) is read. Set it to the first
+# day of the books in Numina, so older mail never reaches the books.
+since: ""
+
+# An existing Secret with the mail password and the Numina API key. The chart never creates it,
+# so it can come from an external secret store.
+existingSecret:
+  name: ""
+  mailPasswordKey: mail-password
+  numinaApiKeyKey: numina-api-key
+
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits: { cpu: 200m, memory: 128Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: { type: RuntimeDefault }
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+
+podLabels: {}
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

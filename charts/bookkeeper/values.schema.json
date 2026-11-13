@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "image",
+    "schedule",
+    "mail",
+    "numina",
+    "since",
+    "existingSecret"
+  ],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^(sha256:[0-9a-f]{64})?$"
+        },
+        "pullPolicy": {
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "schedule": {
+      "type": "string",
+      "minLength": 9
+    },
+    "timeZone": {
+      "type": "string"
+    },
+    "suspend": {
+      "type": "boolean"
+    },
+    "mail": {
+      "type": "object",
+      "required": ["url", "user"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "user": {
+          "type": "string",
+          "minLength": 1
+        },
+        "folder": {
+          "type": "string"
+        }
+      }
+    },
+    "numina": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        }
+      }
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    },
+    "since": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    },
+    "existingSecret": {
+      "type": "object",
+      "required": ["name", "mailPasswordKey", "numinaApiKeyKey"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mailPasswordKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "numinaApiKeyKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

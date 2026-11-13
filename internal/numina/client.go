@@ -1,0 +1,243 @@
+// Package numina uploads documents to a company's inbox in Numina (https://numina.app), a
+// registered Danish bookkeeping system. A Client has no path that books, changes or deletes
+// anything in the books.
+package numina
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/textproto"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// DefaultBaseURL is Numina's production API.
+const DefaultBaseURL = "https://api.numina.app"
+
+const (
+	// maxAnswerBytes caps how much of an answer is read.
+	maxAnswerBytes = 1 << 20
+	// maxRateLimitRetries is how often a rate-limited upload is tried again.
+	maxRateLimitRetries = 3
+	// maxRetryAfter is the longest Retry-After wait one run honours; a longer one stops the upload
+	// and the next run retries it.
+	maxRetryAfter = 60 * time.Second
+	// defaultRetryAfter is the wait when Retry-After is missing or unreadable.
+	defaultRetryAfter = 5 * time.Second
+)
+
+var (
+	errUnreachable = errors.New("numina could not be reached")
+	errUnreadable  = errors.New("numina's answer could not be read")
+	errRefused     = errors.New("numina refused the upload")
+	errNoDocument  = errors.New("numina's answer named no document")
+	errBadRequest  = errors.New("the upload request could not be built")
+)
+
+// UploadResult names the document Numina holds for an uploaded file.
+type UploadResult struct {
+	AttachmentID string
+	Duplicate    bool // Numina already had this exact file
+}
+
+// Client calls Numina's REST API with one company's API key.
+type Client struct {
+	baseURL string
+	token   string
+	http    *http.Client
+	// sleep waits before a retry, ending early with the context's error when it is cancelled.
+	sleep func(ctx context.Context, wait time.Duration) error
+}
+
+// answer is the part of one HTTP answer the upload needs.
+type answer struct {
+	status     int
+	retryAfter string
+	body       []byte
+}
+
+// New returns a Client for baseURL with the given API key.
+func New(baseURL, token string, httpClient *http.Client) *Client {
+	return &Client{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		token:   token,
+		http:    httpClient,
+		sleep:   sleep,
+	}
+}
+
+// UploadToInbox sends one file to the company's inbox and asks Numina to read it (OCR). Numina
+// answers a file it already has with the existing document, so a retry never creates a duplicate.
+func (c *Client) UploadToInbox(
+	ctx context.Context,
+	fileName, contentType string,
+	data []byte,
+) (UploadResult, error) {
+	body, formType, err := uploadForm(fileName, contentType, data)
+	if err != nil {
+		return UploadResult{}, err
+	}
+
+	for attempt := 0; ; attempt++ {
+		got, err := c.post(ctx, body, formType)
+		if err != nil {
+			return UploadResult{}, err
+		}
+
+		wait, retry := retryAfter(got.retryAfter, time.Now())
+		if got.status == http.StatusTooManyRequests && attempt < maxRateLimitRetries && retry {
+			err = c.sleep(ctx, wait)
+			if err != nil {
+				return UploadResult{}, err
+			}
+
+			continue
+		}
+
+		return uploadResult(got)
+	}
+}
+
+// post sends the upload form once and reads the answer.
+func (c *Client) post(ctx context.Context, body []byte, formType string) (answer, error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/v1/attachments",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		// The error quotes the URL, so it never reaches the log.
+		return answer{}, errBadRequest
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", formType)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return answer{}, errUnreachable
+	}
+
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes))
+	_ = resp.Body.Close()
+
+	if readErr != nil {
+		return answer{}, errUnreadable
+	}
+
+	return answer{
+		status:     resp.StatusCode,
+		retryAfter: resp.Header.Get("Retry-After"),
+		body:       data,
+	}, nil
+}
+
+// uploadForm builds the multipart body: the file, and run_ocr=true.
+func uploadForm(fileName, contentType string, data []byte) ([]byte, string, error) {
+	var body bytes.Buffer
+
+	form := multipart.NewWriter(&body)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, fileName))
+	header.Set("Content-Type", contentType)
+
+	part, err := form.CreatePart(header)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %w", errBadRequest, err)
+	}
+
+	_, err = part.Write(data)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %w", errBadRequest, err)
+	}
+
+	err = form.WriteField("run_ocr", "true")
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %w", errBadRequest, err)
+	}
+
+	err = form.Close()
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %w", errBadRequest, err)
+	}
+
+	return body.Bytes(), form.FormDataContentType(), nil
+}
+
+// uploadResult reads the document out of Numina's answer. A refusal reports only its HTTP status:
+// Numina's own message is free text the logs must not carry.
+func uploadResult(got answer) (UploadResult, error) {
+	if got.status != http.StatusOK && got.status != http.StatusCreated {
+		return UploadResult{}, fmt.Errorf("%w with HTTP status %d", errRefused, got.status)
+	}
+
+	var uploaded struct {
+		Attachment struct {
+			ID string `json:"id"`
+		} `json:"attachment"`
+		Duplicate bool `json:"duplicate"`
+	}
+
+	err := json.Unmarshal(got.body, &uploaded)
+	if err != nil || uploaded.Attachment.ID == "" {
+		return UploadResult{}, errNoDocument
+	}
+
+	return UploadResult{
+		AttachmentID: uploaded.Attachment.ID,
+		Duplicate:    uploaded.Duplicate,
+	}, nil
+}
+
+// sleep waits for wait, or until ctx is cancelled, which it reports as the context's error.
+func sleep(ctx context.Context, wait time.Duration) error {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("wait for Numina's rate limit: %w", ctx.Err())
+	case <-timer.C:
+		return nil
+	}
+}
+
+// retryAfter reads a Retry-After header, as delay seconds or an HTTP date (RFC 9110 section
+// 10.2.3). It returns false when Numina asks for a longer wait than one run honours, so the upload
+// stops instead of retrying early. A missing or unreadable header waits defaultRetryAfter.
+func retryAfter(header string, now time.Time) (time.Duration, bool) {
+	wait, ok := parseRetryAfter(strings.TrimSpace(header), now)
+
+	switch {
+	case !ok:
+		return defaultRetryAfter, true
+	case wait > maxRetryAfter:
+		return 0, false
+	default:
+		return wait, true
+	}
+}
+
+// parseRetryAfter returns the wait a Retry-After value names, and false when it names none.
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	seconds, err := strconv.Atoi(value)
+	if err == nil {
+		return time.Duration(seconds) * time.Second, seconds >= 0
+	}
+
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+
+	return max(at.Sub(now), 0), true
+}

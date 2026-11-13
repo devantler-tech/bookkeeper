@@ -1,0 +1,10 @@
+apiVersion: v2
+name: bookkeeper
+description: Sends supplier invoices from a JMAP mailbox to Numina's inbox on a schedule, without AI.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/devantler-tech/bookkeeper
+sources:
+  - https://github.com/devantler-tech/bookkeeper
+keywords: [bookkeeping, numina, jmap, vouchers]
