@@ -1,0 +1,5 @@
+mail:
+  url: https://mail.example.com
+  user: invoices@example.com
+existingSecret:
+  name: bookkeeper

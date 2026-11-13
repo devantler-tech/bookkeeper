@@ -1,166 +1,60 @@
-# Go Template
+# bookkeeper
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/devantler-tech/go-template)](https://goreportcard.com/report/github.com/devantler-tech/go-template)
-[![Go Reference](https://pkg.go.dev/badge/github.com/devantler-tech/go-template.svg)](https://pkg.go.dev/github.com/devantler-tech/go-template)
+`bookkeeper` sends supplier invoices from your mailbox to [Numina](https://numina.app), a registered
+Danish bookkeeping system, so the books get their vouchers without anyone forwarding mail. It reads
+the mailbox your suppliers already send to and uses no AI: every decision is a fixed rule. Numina's
+own AI then matches each voucher to its bank line.
 
-A starting point for new Go projects: an empty, idiomatic Go module with linting, releases, CI and
-instructions for AI coding agents already set up. It is for Go developers who want to write their
-first package on day one instead of assembling tooling first — built for devantler-tech
-repositories and usable anywhere.
+## Install with Helm
 
-## ✨ What you get
-
-- **A module ready for your code** — a no-op `main.go` and the standard `cmd/`, `internal/` and
-  `pkg/` folders. [`pkg/example`](pkg/example) shows the house testing style, a table-driven test;
-  replace it with your first package.
-- **Feature flags built in** — [`pkg/featureflag`](pkg/featureflag) wires the
-  [OpenFeature](https://openfeature.dev/) Go SDK, so a service can ship new behaviour switched off
-  and turn it on once it is proven. Flags live in memory, so it runs with no backend until you swap
-  in [flagd](https://flagd.dev/) or a hosted provider. A CLI can skip the SDK and hide experimental
-  commands behind an `--experimental` opt-in instead. Delete the package once you have your own.
-- **Linting from the first commit** — [golangci-lint](https://golangci-lint.run/) v2 runs a wide
-  set of Go linters and formatters, and [MegaLinter](https://megalinter.io/) checks the YAML,
-  Markdown and workflow files.
-  A [pre-commit](https://pre-commit.com/) hook formats Go code on every commit and generates mocks
-  with [mockery](https://vektra.github.io/mockery/) once you add a `.mockery.yml`.
-- **Releases from your commit messages** — write
-  [Conventional Commits](https://www.conventionalcommits.org/), and merging a `feat:` or `fix:` to
-  `main` tags the next version. The tag makes [GoReleaser](https://goreleaser.com/) build your
-  binaries, as [`.goreleaser.yaml`](.goreleaser.yaml) declares, and attach them to a GitHub release
-  with signed build provenance. Outside devantler-tech, tagging needs the GitHub App set up under
-  [Staying current](#-staying-current).
-- **CI and dependency updates** — the repository's CI calls a pinned shared Go validator for
-  build, test, lint, security and coverage, then checks its result. It works without organization
-  workflow injection. [Dependabot](https://docs.github.com/code-security/dependabot) keeps Go
-  modules and pinned GitHub Actions current.
-- **Instructions for AI agents** — [`AGENTS.md`](AGENTS.md) gives coding agents such as Claude,
-  Copilot and Cursor the project's conventions and validation commands.
-
-The minimum Go version is whatever [`go.mod`](go.mod) declares. This is a starter, not a runnable
-application: its entry point intentionally does nothing until you add your own code.
-
-## 🚀 Get started
-
-You need Git, a Go toolchain meeting [`go.mod`](go.mod), and network access to download Go modules.
-For the command-line route, also install the [GitHub CLI](https://cli.github.com/) and sign in to
-your own GitHub account. Start in the directory where you want a new project checkout.
-
-The next command **creates a public GitHub repository** in your account and clones it locally.
-Replace `my-project` with your chosen name; use `--private` instead of `--public` if it should not
-be public. Only run it when you intend to create that repository:
+The chart runs it as a daily Kubernetes CronJob. Give it a Secret with the mailbox password and a
+Numina API key, then install:
 
 ```bash
-gh repo create my-project --template devantler-tech/go-template --public --clone
-cd my-project
-scripts/rename-placeholders.sh
-go build ./... && go test ./...
+kubectl create secret generic bookkeeper \
+  --from-file=mail-password=./mail-password \
+  --from-file=numina-api-key=./numina-api-key
+helm install bookkeeper oci://ghcr.io/devantler-tech/charts/bookkeeper \
+  --set mail.url=https://mail.example.com \
+  --set mail.user=you@example.com \
+  --set existingSecret.name=bookkeeper
 ```
 
-Success means the build exits 0 and the example and feature-flag tests pass. `go run .` is quiet
-because the starter's main function is a no-op; it does not start a server or deploy anything.
+Each run looks at mail in the inbox that has attachments and that it has not handled before:
 
-The rename script replaces the template's module path in `go.mod`, the Go imports and the README
-badges with your repository's path, read from its `origin` remote, then runs `go mod tidy`. Pass a
-path such as `github.com/acme/widget` to choose it yourself, and review the result with `git diff`.
-Run it only in the project you created, not in an upstream template contribution checkout.
+- **An invoice** — "invoice", "faktura", "receipt", "kvittering", "regning" or "bilag" in the
+  subject or a file name. Its PDF, PNG or JPEG attachments go to Numina's inbox with OCR, and the
+  mail gets a hidden `$bk-sent-to-numina` keyword so the next run skips it.
+- **Anything else** is left alone.
+- **If a download or upload fails,** the mail stays unmarked and the next run tries again. Numina
+  drops files it already has.
 
-Prefer the browser? Click **Use this template** on the
-[repository page](https://github.com/devantler-tech/go-template), clone your new repository, and run
-`scripts/rename-placeholders.sh` followed by the build/test command from its root. Choose the new
-repository's owner and visibility before creating it in the browser.
+It never moves, changes or deletes mail. The run exits non-zero when a mail failed, so a failed Job
+shows up in your cluster's alerting. Its logs carry counts only, never senders, subjects or file
+names. An invoice it misses is still caught by Numina's own missing-voucher reminder.
 
-To format Go code on every commit, install [pre-commit](https://pre-commit.com/) and run
-`pre-commit install` once from your project root. This optional step changes that checkout's Git
-hooks; it is not needed for the initial build/test. Remove those hooks with `pre-commit uninstall`
-if you no longer want them. Linting also requires a golangci-lint v2 release compatible with the
-project's Go version; the [contributor guide](CONTRIBUTING.md#make-a-first-upstream-change) explains
-how to check it.
+## Inputs
 
-## 📝 Everyday commands
+| Value | Meaning | Default |
+|---|---|---|
+| `mail.url` | Base URL of a [JMAP](https://jmap.io) server, HTTPS only | required |
+| `mail.user` | The mailbox your suppliers send invoices to | required |
+| `mail.folder` | Folder to read; empty means the inbox | `""` |
+| `existingSecret.name` | Secret holding the keys `mail-password` and `numina-api-key` | required |
+| `schedule`, `timeZone` | When it runs | `15 6 * * *`, `Europe/Copenhagen` |
+| `limit` | The most mails one run reads, 1–500 | `100` |
+| `image.digest` | Pin the exact image | `""` |
 
-| Task             | Command                 |
-|------------------|-------------------------|
-| Add a dependency | `go get MODULE@VERSION` |
-| Build            | `go build ./...`        |
-| Run              | `go run .`              |
-| Test             | `go test ./...`         |
-| Lint             | `golangci-lint run`     |
+Without Kubernetes:
 
-`MODULE` and `VERSION` are placeholders for your chosen dependency and compatible release.
-`.golangci.yml` lets non-test code import only the standard library and OpenFeature, so add each
-new dependency to its `depguard` allowlist.
-
-## 🔏 Verify a release download
-
-Each release archive comes with a signed
-[build provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations)
-that ties it to the commit and workflow run that built it. To check a download, run the GitHub CLI
-with the repository it came from:
-
-```sh
-gh attestation verify ARCHIVE --repo OWNER/REPO
+```bash
+bookkeeper collect-vouchers --mail-url https://mail.example.com --mail-user you@example.com \
+  --mail-password-file ./mail-password --numina-token-file ./numina-api-key
 ```
 
-`ARCHIVE` is the downloaded file, for example `go-template_1.5.12_linux_amd64.tar.gz`, and
-`OWNER/REPO` is the repository that published it. A file changed after release, or built anywhere
-else, fails the check.
+## What it needs
 
-The release job asks only for what it uses: permission to publish the release and to sign and store
-its provenance. GitHub stores attestations for public repositories on every plan; a private
-repository needs GitHub Enterprise Cloud, so the release skips the attestation step while the
-repository is private.
-
-## 🔄 Staying current
-
-Every week a template-sync workflow opens a pull request with any changes to this template's shared
-setup, so your project keeps up without copying files by hand. Files fall into three groups:
-
-- **Synced from the template** — the CI, release and sync workflows in `.github/workflows/`, the
-  shared lint configs (`.mega-linter.yml`, `.pre-commit-config.yaml`, `.editorconfig`,
-  `.gitattributes`) and the `CLAUDE.md`/`GEMINI.md` shims. Change these in the template, not in
-  your copy.
-- **Yours** — everything listed in your project's own `.templatesyncignore`, which a sync never
-  touches. The [supplied file](.templatesyncignore) protects your Go module and code, `README.md`,
-  `CONTRIBUTING.md`, `AGENTS.md`, `LICENSE`, `CODEOWNERS`, and the
-  configs you tailor, such as `.golangci.yml`, `.releaserc`, `.goreleaser.yaml`, `dependabot.yaml` and
-  `cspell.json`.
-- **Used once** — the rename script and the template's own `validate-scaffold.yaml` check. Delete
-  them after setup and syncs will not bring them back.
-
-**Existing projects need a one-time documentation migration.** The sync action does not copy
-updates to `.templatesyncignore` itself. Before the sync runs, add the literal line
-`CONTRIBUTING.md` to your project's own `.templatesyncignore` and commit it. If a sync PR is
-already open, restore your tailored guide and commit the ignore entry before merging that PR:
-adding an ignore entry does not undo changes already proposed. Projects created from the updated
-template already include that entry. Review future ownership changes in your own ignore file too;
-an upstream addition does not automatically protect an older project.
-
-The template's scaffold check also scans its shell scripts with the shared shell-pipeline
-validator at an immutable release pin. It checks both script directories, requires a completed
-scan, and leaves the existing onboarding and mockery checks in place.
-
-In devantler-tech repositories releases and the sync work out of the box. Elsewhere:
-
-1. Keep the supplied `.github/workflows/ci.yaml` for Go validation and require its
-    `CI - Required Checks` status in your repository's branch protection or ruleset. Validation
-    does not need an App key outside devantler-tech: apply any reported fixes yourself.
-    Generated projects get the callsite, not this template's repository ruleset.
-    If you replace the pipeline, list `.github/workflows/ci.yaml` in `.templatesyncignore` so
-    syncs keep your version. Fork PRs run read-only; repository publishing remains separate.
-2. When you want automated releases, install a suitable existing GitHub App on your repository
-    (or create one if needed) with write access to contents, issues, pull requests and workflows.
-    Add its private key as the `APP_PRIVATE_KEY` secret and its client ID as the
-    `APP_CLIENT_ID` variable; releases then tag on merge. Set the variable
-    `TEMPLATE_SYNC_ENABLED=true` to turn the sync on too.
-
-## Contributing
-
-Want to improve the template itself? Follow [CONTRIBUTING.md](CONTRIBUTING.md) for a safe upstream
-checkout, local checks and submission. In a generated project, replace this link's guide with
-that project's contribution instructions; the documentation is instance-owned.
-
-## 🤖 Maintenance
-
-An autonomous AI agent maintains this template. Its canonical engineering contract and full
-validation matrix are in [`AGENTS.md`](AGENTS.md). Preserve the [Apache-2.0 license](LICENSE).
+- The mailbox's JMAP address and password.
+- A Numina API key with upload rights (`documents:write`). It cannot book, change or delete anything
+  in the books.
+- Egress to the mail server and to `api.numina.app` on port 443.

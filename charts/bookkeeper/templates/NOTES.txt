@@ -1,0 +1,4 @@
+The collector runs on "{{ .Values.schedule }}" ({{ .Values.timeZone }}) as CronJob {{ include "bookkeeper.fullname" . }}.
+It reads {{ .Values.mail.user }} on {{ .Values.mail.url }} and uploads invoices to Numina's inbox.
+Run it once now with:
+  kubectl create job --from=cronjob/{{ include "bookkeeper.fullname" . }} {{ include "bookkeeper.fullname" . }}-manual -n {{ .Release.Namespace }}

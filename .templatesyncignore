@@ -66,3 +66,8 @@ scripts/go-floor.test.sh
 
 # --- This ignore-list itself (the instance curates its own ownership) ---
 .templatesyncignore
+
+# --- Not used: no GitHub Copilot features in this repository ---
+# The template ships a Copilot coding-agent setup workflow; this instance
+# deleted it, and listing it here stops a sync bringing it back.
+.github/workflows/copilot-setup-steps.yml
