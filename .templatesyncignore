@@ -30,6 +30,9 @@ LICENSE
 .claude/skills/maintain/SKILL.md
 
 # --- Release / dependency / lint config the instance tailors ---
+# .mega-linter.yml is instance-owned here: it excludes the Helm chart templates from the YAML
+# linters, which the template has no chart to need.
+.mega-linter.yml
 # .golangci.yml is instance-owned on purpose: its depguard rule is a strict
 # allowlist (stdlib + OpenFeature), so any real project must extend it — a
 # synced overwrite would clobber the project's dependency allowlist.

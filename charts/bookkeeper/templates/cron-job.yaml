@@ -45,13 +45,13 @@ spec:
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               args:
                 - collect-vouchers
-                - --mail-url={{ .Values.mail.url }}
-                - --mail-user={{ .Values.mail.user }}
+                - {{ printf "--mail-url=%s" .Values.mail.url | quote }}
+                - {{ printf "--mail-user=%s" .Values.mail.user | quote }}
                 - --mail-password-file=/run/secrets/bookkeeper/mail-password
-                - --numina-url={{ .Values.numina.url }}
+                - {{ printf "--numina-url=%s" .Values.numina.url | quote }}
                 - --numina-token-file=/run/secrets/bookkeeper/numina-api-key
-                - --folder={{ .Values.mail.folder }}
-                - --limit={{ .Values.limit }}
+                - {{ printf "--folder=%s" .Values.mail.folder | quote }}
+                - {{ printf "--limit=%d" (int .Values.limit) | quote }}
               securityContext:
                 {{- toYaml .Values.securityContext | nindent 16 }}
               resources:

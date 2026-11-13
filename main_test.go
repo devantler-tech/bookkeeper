@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/devantler-tech/bookkeeper/internal/jmaptest"
 )
 
 func mailServer(t *testing.T, moved *[]string) *httptest.Server {
@@ -21,25 +23,20 @@ func mailServer(t *testing.T, moved *[]string) *httptest.Server {
 	srv = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
 		switch {
 		case req.URL.Path == "/jmap/session":
-			writeJSON(writer, map[string]any{
+			jmaptest.WriteJSON(writer, map[string]any{
 				"apiUrl":          srv.URL + "/jmap",
 				"downloadUrl":     srv.URL + "/dl/{accountId}/{blobId}/{name}",
 				"primaryAccounts": map[string]string{"urn:ietf:params:jmap:mail": "a"},
 				"accounts":        map[string]any{"a": map[string]any{"isReadOnly": false}},
 			})
 		case req.URL.Path == "/jmap":
-			var call struct {
-				MethodCalls [][]json.RawMessage `json:"methodCalls"`
-			}
-
-			_ = json.NewDecoder(req.Body).Decode(&call)
-
-			var method string
-
-			_ = json.Unmarshal(call.MethodCalls[0][0], &method)
+			method, _ := jmaptest.Call(req)
 			result := jmapResult(method, moved)
 
-			writeJSON(writer, map[string]any{"methodResponses": []any{[]any{method, result, "c"}}})
+			jmaptest.WriteJSON(
+				writer,
+				map[string]any{"methodResponses": []any{[]any{method, result, "c"}}},
+			)
 		case strings.HasPrefix(req.URL.Path, "/dl/"):
 			_, _ = io.WriteString(writer, "%PDF-1.7 abc")
 		}
@@ -81,14 +78,6 @@ func jmapResult(method string, moved *[]string) map[string]any {
 	}
 
 	return result
-}
-
-// writeJSON answers with value, or with a server error the client under test then reports.
-func writeJSON(writer http.ResponseWriter, value any) {
-	err := json.NewEncoder(writer).Encode(value)
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
-	}
 }
 
 func numinaServer(t *testing.T, status int) *httptest.Server {
@@ -195,13 +184,52 @@ func TestRefusals(t *testing.T) {
 		"token with space": args("https://m", "https://n", password, secret(t, "a b")),
 		"missing file":     args("https://m", "https://n", "/nonexistent", token),
 	}
-	for name, a := range cases {
+	// Plain HTTP to a host that only starts like this machine, or a URL with no host.
+	for _, bad := range []string{
+		"http://localhost.attacker.example",
+		"http://127.0.0.1.attacker.example",
+		"http://localhost@attacker.example",
+		"mail.example.com",
+	} {
+		cases["mail URL "+bad] = args(bad, "https://n", password, token)
+		cases["Numina URL "+bad] = args("https://m", bad, password, token)
+	}
+
+	for name, cmdline := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			if code := run(context.Background(), a, &bytes.Buffer{}, newHTTPClient()); code != 1 {
-				t.Fatalf("exit %d", code)
+			// A refused run says so before it reaches any server.
+			var out bytes.Buffer
+
+			code := run(context.Background(), cmdline, &out, newHTTPClient())
+			refused := strings.Contains(out.String(), "refused") ||
+				strings.Contains(out.String(), "Usage")
+
+			if code != 1 || !refused {
+				t.Fatalf("exit %d\n%s", code, out.String())
 			}
 		})
+	}
+}
+
+func TestCheckURLAllowsHTTPOnlyToThisMachine(t *testing.T) {
+	t.Parallel()
+
+	for raw, want := range map[string]error{
+		"https://mail.example.com":          nil,
+		"http://localhost:8080":             nil,
+		"http://127.0.0.1:8080":             nil,
+		"http://[::1]:8080":                 nil,
+		"http://localhost.attacker.example": errURLNotHTTPS,
+		"http://127.0.0.1.attacker.example": errURLNotHTTPS,
+		"ftp://localhost":                   errURLNotHTTPS,
+		"https://":                          errURLNoHost,
+		"https://%zz":                       errURLNoHost,
+	} {
+		got := checkURL(raw)
+		if !errors.Is(got, want) {
+			t.Errorf("checkURL(%q) = %v, want %v", raw, got, want)
+		}
 	}
 }

@@ -16,7 +16,7 @@ the owner. Booking, reconciliation and VAT stay in Numina.
 ## Repository structure
 
 - `main.go` — the CLI: flags, secret files, the HTTP client (no redirects), exit codes.
-- `internal/mail` — a JMAP client limited to reading mail and setting one keyword. It refuses any other method and never creates or destroys mail.
+- `internal/mail` — a JMAP client limited to reading mail and setting one keyword per call. It refuses any other method and never creates or destroys mail.
 - `internal/numina` — uploads a file to Numina's inbox (`POST /v1/attachments`) with OCR.
 - `internal/vouchers` — the run: find invoice mail, upload its PDF/PNG/JPEG attachments, mark the mail.
 - `charts/bookkeeper` — the Helm chart (CronJob, ServiceAccount, values schema).
@@ -44,7 +44,8 @@ mailbox or Numina account.
   names, amounts, mail subjects, file names or credentials. The program logs
   counts only; keep it that way.
 - **Never widen what the program can do to mail or the books.** It reads mail
-  and sets one keyword; it uploads to Numina's inbox and nothing else.
+  and sets one of two hidden keywords (`$bk-sent-to-numina`, `$bk-not-an-invoice`);
+  it uploads to Numina's inbox and nothing else.
 - **Stdlib only.** `.golangci.yml`'s `depguard` allows the standard library and
   this module; adding a dependency needs a stated reason.
 

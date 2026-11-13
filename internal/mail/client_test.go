@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/devantler-tech/bookkeeper/internal/jmaptest"
 	"github.com/devantler-tech/bookkeeper/internal/mail"
 )
 
@@ -21,23 +22,25 @@ const (
 type fakeServer struct {
 	*httptest.Server
 
-	readOnly  bool
-	apiHost   string
-	calls     []string
-	lastArgs  map[string]any
-	downloads []string
+	readOnly        bool
+	apiHost         string
+	maxObjectsInGet any // the session's core maxObjectsInGet; nil sends null
+	calls           []string
+	lastArgs        map[string]any
+	downloads       []string
 }
 
 func newServer(t *testing.T) *fakeServer {
 	t.Helper()
 
 	fake := &fakeServer{
-		Server:    nil, // started below, once its handler can refer to fake
-		readOnly:  false,
-		apiHost:   "",
-		calls:     nil,
-		lastArgs:  nil,
-		downloads: nil,
+		Server:          nil, // started below, once its handler can refer to fake
+		readOnly:        false,
+		apiHost:         "",
+		maxObjectsInGet: nil,
+		calls:           nil,
+		lastArgs:        nil,
+		downloads:       nil,
 	}
 	fake.Server = httptest.NewServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(fake.Close)
@@ -77,7 +80,10 @@ func (f *fakeServer) session(writer http.ResponseWriter) {
 		host = f.URL
 	}
 
-	writeJSON(writer, map[string]any{
+	jmaptest.WriteJSON(writer, map[string]any{
+		"capabilities": map[string]any{
+			"urn:ietf:params:jmap:core": map[string]any{"maxObjectsInGet": f.maxObjectsInGet},
+		},
 		"apiUrl":          host + "/jmap",
 		"downloadUrl":     f.URL + "/jmap/download/{accountId}/{blobId}/{name}?accept={type}",
 		"primaryAccounts": map[string]string{mail.CapabilityMail: testAccount},
@@ -86,19 +92,7 @@ func (f *fakeServer) session(writer http.ResponseWriter) {
 }
 
 func (f *fakeServer) jmap(writer http.ResponseWriter, req *http.Request) {
-	var call struct {
-		MethodCalls [][]json.RawMessage `json:"methodCalls"`
-	}
-
-	_ = json.NewDecoder(req.Body).Decode(&call)
-
-	var method string
-
-	_ = json.Unmarshal(call.MethodCalls[0][0], &method)
-
-	var args map[string]any
-
-	_ = json.Unmarshal(call.MethodCalls[0][1], &args)
+	method, args := jmaptest.Call(req)
 
 	f.calls, f.lastArgs = append(f.calls, method), args
 	result := map[string]any{"accountId": args["accountId"]}
@@ -128,7 +122,7 @@ func (f *fakeServer) jmap(writer http.ResponseWriter, req *http.Request) {
 		result["updated"] = map[string]any{"e1": nil}
 	}
 
-	writeJSON(writer, map[string]any{"methodResponses": []any{[]any{method, result, "c"}}})
+	jmaptest.WriteJSON(writer, map[string]any{"methodResponses": []any{[]any{method, result, "c"}}})
 }
 
 func connected(t *testing.T, fake *fakeServer) *mail.Client {
@@ -229,14 +223,33 @@ func checkMailboxes(ctx context.Context, t *testing.T, client *mail.Client) {
 func checkQuery(ctx context.Context, t *testing.T, fake *fakeServer, client *mail.Client) {
 	t.Helper()
 
-	ids, err := client.Query(ctx, "in", "$bk-sent", 50)
-
-	filter, _ := fake.lastArgs["filter"].(map[string]any)
-	if err != nil || len(ids) != 2 || fake.lastArgs["limit"] != float64(50) ||
-		filter["inMailbox"] != "in" ||
-		filter["hasAttachment"] != true ||
-		filter["notKeyword"] != "$bk-sent" {
+	ids, err := client.Query(ctx, "in", []string{"$bk-sent", "$bk-skip"}, 50)
+	if err != nil || len(ids) != 2 || fake.lastArgs["limit"] != float64(50) {
 		t.Fatalf("Query: %v %v %v", ids, err, fake.lastArgs)
+	}
+
+	// json.Marshal sorts map keys, so the filter has one exact form.
+	filter, err := json.Marshal(fake.lastArgs["filter"])
+	if err != nil || string(filter) != `{"conditions":[{"hasAttachment":true,"inMailbox":"in"},`+
+		`{"notKeyword":"$bk-sent"},{"notKeyword":"$bk-skip"}],"operator":"AND"}` {
+		t.Fatalf("Query filter %s", filter)
+	}
+}
+
+func TestQueryNeverAsksForMoreThanOneEmailGetReads(t *testing.T) {
+	t.Parallel()
+
+	// The server's maxObjectsInGet caps the query; a missing or unusable value leaves it as asked.
+	for limit, wants := range map[any]float64{
+		2: 2, 500: 50, nil: 50, 0: 50, -1: 50, 2.5: 50, "2": 50,
+	} {
+		fake := newServer(t)
+		fake.maxObjectsInGet = limit
+
+		_, err := connected(t, fake).Query(context.Background(), "in", nil, 50)
+		if err != nil || fake.lastArgs["limit"] != wants {
+			t.Errorf("maxObjectsInGet %v: %v, want limit %v (%v)", limit, fake.lastArgs, wants, err)
+		}
 	}
 }
 
@@ -291,13 +304,5 @@ func checkDownload(
 	_, err = client.Download(ctx, part, 4)
 	if err == nil {
 		t.Fatal("an attachment over the limit must be refused")
-	}
-}
-
-// writeJSON answers with value, or with a server error the client under test then reports.
-func writeJSON(writer http.ResponseWriter, value any) {
-	err := json.NewEncoder(writer).Encode(value)
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
 	}
 }

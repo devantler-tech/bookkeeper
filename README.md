@@ -25,13 +25,15 @@ Each run looks at mail in the inbox that has attachments and that it has not han
 - **An invoice** — "invoice", "faktura", "receipt", "kvittering", "regning" or "bilag" in the
   subject or a file name. Its PDF, PNG or JPEG attachments go to Numina's inbox with OCR, and the
   mail gets a hidden `$bk-sent-to-numina` keyword so the next run skips it.
-- **Anything else** is left alone.
-- **If a download or upload fails,** the mail stays unmarked and the next run tries again. Numina
-  drops files it already has.
+- **Anything else** — mail that is not an invoice, or has no PDF, PNG or JPEG voucher — gets a
+  hidden `$bk-not-an-invoice` keyword so later runs skip it and reach newer mail.
+- **If a download, upload or marking fails,** the mail stays unmarked and the next run tries again.
+  Numina drops files it already has.
 
-It never moves, changes or deletes mail. The run exits non-zero when a mail failed, so a failed Job
-shows up in your cluster's alerting. Its logs carry counts only, never senders, subjects or file
-names. An invoice it misses is still caught by Numina's own missing-voucher reminder.
+It never moves or deletes mail, and changes nothing on it but those two hidden keywords. The run
+exits non-zero when a mail failed, so a failed Job shows up in your cluster's alerting. Its logs
+carry counts only, never senders, subjects, file names or mail IDs. An invoice it misses is still
+caught by Numina's own missing-voucher reminder.
 
 ## Inputs
 

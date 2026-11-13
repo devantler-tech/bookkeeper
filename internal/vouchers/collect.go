@@ -23,6 +23,9 @@ const (
 	minImageBytes = 10 << 10
 	// SentKeyword marks a mail whose vouchers are in Numina, so the next run skips it.
 	SentKeyword = "$bk-sent-to-numina"
+	// NotInvoiceKeyword marks a mail that holds no voucher to send, so later runs skip it and
+	// reach newer mail.
+	NotInvoiceKeyword = "$bk-not-an-invoice"
 
 	// pdfHeaderWindow is how far into a file the %PDF- marker may start.
 	pdfHeaderWindow = 1024
@@ -36,14 +39,14 @@ const (
 
 var (
 	errNoInbox  = errors.New("the mail account has no inbox")
-	errNoFolder = errors.New("the mail account has no")
+	errNoFolder = errors.New("the mail account has no folder with the name --folder gives")
 )
 
 // Mailbox is what the collector needs from a mail server.
 type Mailbox interface {
 	Connect(ctx context.Context) error
 	Mailboxes(ctx context.Context) ([]mail.Mailbox, error)
-	Query(ctx context.Context, mailboxID, skipKeyword string, limit int) ([]string, error)
+	Query(ctx context.Context, mailboxID string, skipKeywords []string, limit int) ([]string, error)
 	Emails(ctx context.Context, ids []string) ([]mail.Email, error)
 	Flag(ctx context.Context, emailID, keyword string) error
 	Download(ctx context.Context, part mail.Part, limit int64) ([]byte, error)
@@ -73,9 +76,11 @@ type Summary struct {
 	Failed     int `json:"mailsFailed"`
 }
 
-// Collect runs one pass. Each unflagged mail with attachments that looks like an invoice has its
-// vouchers uploaded and is then flagged; mail is never moved or changed otherwise. A mail whose
-// download or upload fails stays unflagged for the next run, and Numina drops files it already has.
+// Collect runs one pass over the oldest unmarked mails with attachments. A mail that looks like an
+// invoice has its vouchers uploaded and is then marked with SentKeyword; any other mail is marked
+// with NotInvoiceKeyword, so later runs reach newer mail. Mail is never moved or changed otherwise.
+// A mail whose download, upload or marking fails stays unmarked for the next run, and Numina drops
+// files it already has.
 func Collect(
 	ctx context.Context,
 	box Mailbox,
@@ -93,31 +98,23 @@ func Collect(
 	for _, message := range messages {
 		sum.Mails++
 
-		if !looksLikeInvoice(message) {
+		keyword, failed := handle(ctx, box, inbox, message, &sum, log)
+		if failed {
+			sum.Failed++
+
 			continue
 		}
 
-		files, failed := sendVouchers(ctx, box, inbox, message, &sum, log)
-
-		switch {
-		case failed:
+		err := box.Flag(ctx, message.ID, keyword)
+		if err != nil {
 			sum.Failed++
-		case files > 0:
-			err := box.Flag(ctx, message.ID, SentKeyword)
-			if err != nil {
-				sum.Failed++
 
-				log.Error(
-					"could not flag mail as sent to Numina",
-					"mail",
-					message.ID,
-					"error",
-					err.Error(),
-				)
+			log.Error("could not mark mail as handled", "error", err.Error())
 
-				continue
-			}
+			continue
+		}
 
+		if keyword == SentKeyword {
 			sum.Invoices++
 		}
 	}
@@ -125,7 +122,31 @@ func Collect(
 	return sum, nil
 }
 
-// unhandledMail reads the mails in the configured folder that have attachments and no SentKeyword.
+// handle sends the vouchers of a mail that looks like an invoice. It returns the keyword that marks
+// the mail as handled, and whether a download or upload failed, which keeps the mail for the next
+// run. A mail with no voucher to send gets NotInvoiceKeyword.
+func handle(
+	ctx context.Context,
+	box Mailbox,
+	inbox Inbox,
+	message mail.Email,
+	sum *Summary,
+	log *slog.Logger,
+) (string, bool) {
+	if !looksLikeInvoice(message) {
+		return NotInvoiceKeyword, false
+	}
+
+	files, failed := sendVouchers(ctx, box, inbox, message, sum, log)
+	if files == 0 {
+		return NotInvoiceKeyword, failed
+	}
+
+	return SentKeyword, failed
+}
+
+// unhandledMail reads the mails in the configured folder that have attachments and carry neither
+// SentKeyword nor NotInvoiceKeyword.
 func unhandledMail(ctx context.Context, box Mailbox, opt Options) ([]mail.Email, error) {
 	err := box.Connect(ctx)
 	if err != nil {
@@ -142,7 +163,7 @@ func unhandledMail(ctx context.Context, box Mailbox, opt Options) ([]mail.Email,
 		return nil, err
 	}
 
-	ids, err := box.Query(ctx, source, SentKeyword, opt.Limit)
+	ids, err := box.Query(ctx, source, []string{SentKeyword, NotInvoiceKeyword}, opt.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("find mail: %w", err)
 	}
@@ -177,7 +198,7 @@ func sendVouchers(
 		if err != nil {
 			failed = true
 
-			log.Error("attachment download failed", "mail", message.ID, "error", err.Error())
+			log.Error("attachment download failed", "error", err.Error())
 
 			continue
 		}
@@ -190,7 +211,7 @@ func sendVouchers(
 		if err != nil {
 			failed = true
 
-			log.Error("upload to Numina failed", "mail", message.ID, "error", err.Error())
+			log.Error("upload to Numina failed", "error", err.Error())
 
 			continue
 		}
@@ -243,7 +264,8 @@ func findFolder(folders []mail.Mailbox, name string) (string, error) {
 		return "", errNoInbox
 	}
 
-	return "", fmt.Errorf("%w %q folder", errNoFolder, name)
+	// The folder's name can name a supplier, so it never reaches the log.
+	return "", errNoFolder
 }
 
 // extension returns the extension a file of an accepted type gets, and false for any type

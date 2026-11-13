@@ -76,6 +76,8 @@ type Client struct {
 	accountID   string
 	apiURL      string
 	downloadURL string
+	// maxObjectsInGet is the most mails the server returns from one Email/get; 0 means unknown.
+	maxObjectsInGet int
 }
 
 // New returns a Client for the JMAP server at base, for example https://mail.example.com.
@@ -87,9 +89,10 @@ func New(base, user, password string, httpClient *http.Client) *Client {
 		password: password,
 		http:     httpClient,
 		// Connect fills these in from the JMAP session.
-		accountID:   "",
-		apiURL:      "",
-		downloadURL: "",
+		accountID:       "",
+		apiURL:          "",
+		downloadURL:     "",
+		maxObjectsInGet: 0,
 	}
 }
 
@@ -101,9 +104,10 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	var session struct {
-		APIURL          string            `json:"apiUrl"`
-		DownloadURL     string            `json:"downloadUrl"`
-		PrimaryAccounts map[string]string `json:"primaryAccounts"`
+		Capabilities    map[string]json.RawMessage `json:"capabilities"`
+		APIURL          string                     `json:"apiUrl"`
+		DownloadURL     string                     `json:"downloadUrl"`
+		PrimaryAccounts map[string]string          `json:"primaryAccounts"`
 		Accounts        map[string]struct {
 			IsReadOnly bool `json:"isReadOnly"`
 		} `json:"accounts"`
@@ -130,6 +134,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	c.accountID, c.apiURL, c.downloadURL = account, session.APIURL, session.DownloadURL
+	c.maxObjectsInGet = maxObjectsInGet(session.Capabilities[capabilityCore])
 
 	return nil
 }
@@ -150,25 +155,34 @@ func (c *Client) Mailboxes(ctx context.Context) ([]Mailbox, error) {
 	return out.List, err
 }
 
-// Query returns the IDs of the oldest mails in a mailbox that have attachments and do not carry
-// skipKeyword yet, at most limit of them.
+// Query returns the IDs of the oldest mails in a mailbox that have attachments and carry none of
+// skipKeywords, at most limit of them and never more than one Email/get can read.
 func (c *Client) Query(
 	ctx context.Context,
-	mailboxID, skipKeyword string,
+	mailboxID string,
+	skipKeywords []string,
 	limit int,
 ) ([]string, error) {
 	var out struct {
 		IDs []string `json:"ids"`
 	}
 
+	if c.maxObjectsInGet > 0 {
+		limit = min(limit, c.maxObjectsInGet)
+	}
+
+	// One condition holds one notKeyword, so an AND operator joins them (RFC 8620 section 5.5).
+	conditions := make([]any, 0, 1+len(skipKeywords))
+
+	conditions = append(conditions, map[string]any{"inMailbox": mailboxID, "hasAttachment": true})
+	for _, keyword := range skipKeywords {
+		conditions = append(conditions, map[string]any{"notKeyword": keyword})
+	}
+
 	err := c.call(ctx, "Email/query", map[string]any{
-		"filter": map[string]any{
-			"inMailbox":     mailboxID,
-			"hasAttachment": true,
-			"notKeyword":    skipKeyword,
-		},
-		"sort":  []any{map[string]any{"property": "receivedAt", "isAscending": true}},
-		"limit": limit,
+		"filter": map[string]any{"operator": "AND", "conditions": conditions},
+		"sort":   []any{map[string]any{"property": "receivedAt", "isAscending": true}},
+		"limit":  limit,
 	}, &out)
 
 	return out.IDs, err
@@ -244,7 +258,8 @@ func (c *Client) call(ctx context.Context, method string, args map[string]any, o
 		"methodCalls": []any{[]any{method, args, "c"}},
 	})
 	if err != nil {
-		return fmt.Errorf("JMAP %s %w: %w", method, errEncodeCall, err)
+		// The encoder's message can quote an argument, such as a mail ID, so it never reaches the log.
+		return fmt.Errorf("JMAP %s %w", method, errEncodeCall)
 	}
 
 	data, err := c.send(ctx, http.MethodPost, c.apiURL, "application/json", body, maxAnswerBytes)
@@ -294,6 +309,21 @@ func (c *Client) send(
 	}
 
 	return data, nil
+}
+
+// maxObjectsInGet reads the core capability's maxObjectsInGet, returning 0 when it is missing or
+// not a positive whole number.
+func maxObjectsInGet(core json.RawMessage) int {
+	var capability struct {
+		MaxObjectsInGet int `json:"maxObjectsInGet"`
+	}
+
+	err := json.Unmarshal(core, &capability)
+	if err != nil || capability.MaxObjectsInGet < 1 {
+		return 0
+	}
+
+	return capability.MaxObjectsInGet
 }
 
 // sameOrigin keeps the password on the configured server even if a session names another host.
@@ -354,7 +384,8 @@ func decodeAnswer(method string, data []byte, out any) error {
 
 	err = json.Unmarshal(envelope.MethodResponses[0][1], out)
 	if err != nil {
-		return fmt.Errorf("JMAP %s %w: %w", method, errUnexpected, err)
+		// The decoder's message can quote a value from the answer, so it never reaches the log.
+		return fmt.Errorf("JMAP %s %w", method, errUnexpected)
 	}
 
 	return nil

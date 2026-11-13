@@ -51,7 +51,8 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
-	sleep   func(time.Duration)
+	// sleep waits before a retry, ending early with the context's error when it is cancelled.
+	sleep func(ctx context.Context, wait time.Duration) error
 }
 
 // answer is the part of one HTTP answer the upload needs.
@@ -67,7 +68,7 @@ func New(baseURL, token string, httpClient *http.Client) *Client {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		http:    httpClient,
-		sleep:   time.Sleep,
+		sleep:   sleep,
 	}
 }
 
@@ -90,7 +91,10 @@ func (c *Client) UploadToInbox(
 		}
 
 		if got.status == http.StatusTooManyRequests && attempt < maxRateLimitRetries {
-			c.sleep(retryAfter(got.retryAfter))
+			err = c.sleep(ctx, retryAfter(got.retryAfter))
+			if err != nil {
+				return UploadResult{}, err
+			}
 
 			continue
 		}
@@ -108,7 +112,8 @@ func (c *Client) post(ctx context.Context, body []byte, formType string) (answer
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return answer{}, fmt.Errorf("%w: %w", errBadRequest, err)
+		// The error quotes the URL, so it never reaches the log.
+		return answer{}, errBadRequest
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.token)
@@ -166,16 +171,11 @@ func uploadForm(fileName, contentType string, data []byte) ([]byte, string, erro
 	return body.Bytes(), form.FormDataContentType(), nil
 }
 
-// uploadResult reads the document out of Numina's answer, or why Numina refused the upload.
+// uploadResult reads the document out of Numina's answer. A refusal reports only its HTTP status:
+// Numina's own message is free text the logs must not carry.
 func uploadResult(got answer) (UploadResult, error) {
 	if got.status != http.StatusOK && got.status != http.StatusCreated {
-		var refusal struct {
-			Error string `json:"error"`
-		}
-
-		_ = json.Unmarshal(got.body, &refusal)
-
-		return UploadResult{}, fmt.Errorf("%w with %d (%s)", errRefused, got.status, refusal.Error)
+		return UploadResult{}, fmt.Errorf("%w with HTTP status %d", errRefused, got.status)
 	}
 
 	var uploaded struct {
@@ -194,6 +194,19 @@ func uploadResult(got answer) (UploadResult, error) {
 		AttachmentID: uploaded.Attachment.ID,
 		Duplicate:    uploaded.Duplicate,
 	}, nil
+}
+
+// sleep waits for wait, or until ctx is cancelled, which it reports as the context's error.
+func sleep(ctx context.Context, wait time.Duration) error {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("wait for Numina's rate limit: %w", ctx.Err())
+	case <-timer.C:
+		return nil
+	}
 }
 
 func retryAfter(header string) time.Duration {

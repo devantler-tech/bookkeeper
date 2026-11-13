@@ -10,9 +10,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -33,10 +35,11 @@ const (
 )
 
 const usage = `Usage: bookkeeper collect-vouchers --mail-url <https://mail.example.com> --mail-user <user>
-       --mail-password-file <path> --numina-token-file <path> [flags]`
+	--mail-password-file <path> --numina-token-file <path> [flags]`
 
 var (
 	errURLRequired      = errors.New("is required")
+	errURLNoHost        = errors.New("must be a full URL such as https://mail.example.com")
 	errURLNotHTTPS      = errors.New("must use HTTPS")
 	errUserOrLimit      = errors.New("--mail-user is required and --limit must be 1-500")
 	errNoSecretFile     = errors.New("no file given")
@@ -187,15 +190,25 @@ func collectVouchers(
 	return 0
 }
 
-// checkURL accepts HTTPS, and plain HTTP only to this machine for local testing.
+// checkURL accepts HTTPS, and plain HTTP only to this machine for local testing. It compares the
+// parsed host, because a prefix such as http://localhost also matches http://localhost.example.
 func checkURL(raw string) error {
-	switch {
-	case raw == "":
+	if raw == "" {
 		return errURLRequired
-	case strings.HasPrefix(raw, "https://"),
-		strings.HasPrefix(raw, "http://127.0.0.1"),
-		strings.HasPrefix(raw, "http://localhost"):
+	}
+
+	target, err := url.Parse(raw)
+	if err != nil || target.Host == "" {
+		return errURLNoHost
+	}
+
+	switch target.Scheme {
+	case "https":
 		return nil
+	case "http":
+		if slices.Contains([]string{"localhost", "127.0.0.1", "::1"}, target.Hostname()) {
+			return nil
+		}
 	}
 
 	return errURLNotHTTPS

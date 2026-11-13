@@ -2,9 +2,11 @@ package numina_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,7 +101,11 @@ func TestUploadRetriesRateLimitAndReportsDuplicates(t *testing.T) {
 
 	var slept time.Duration
 
-	client.SetSleep(func(d time.Duration) { slept += d })
+	client.SetSleep(func(_ context.Context, d time.Duration) error {
+		slept += d
+
+		return nil
+	})
 
 	got, err := client.UploadToInbox(
 		context.Background(),
@@ -112,16 +118,64 @@ func TestUploadRetriesRateLimitAndReportsDuplicates(t *testing.T) {
 	}
 }
 
+// roundTripFunc answers requests in-process, so a test controls exactly when its context ends.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestCancelledContextEndsTheRateLimitWait(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	requests := 0
+	// Numina asks for the longest wait honoured, and the run is cancelled as the answer arrives.
+	rateLimited := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+
+		cancel()
+
+		answer := httptest.NewRecorder()
+		answer.Header().Set("Retry-After", "60")
+		answer.WriteHeader(http.StatusTooManyRequests)
+
+		return answer.Result(), nil
+	})
+	httpClient := &http.Client{
+		Transport:     rateLimited,
+		CheckRedirect: nil,
+		Jar:           nil,
+		Timeout:       0,
+	}
+
+	start := time.Now()
+
+	_, err := numina.New("https://numina.example", "k", httpClient).
+		UploadToInbox(ctx, "a.pdf", "application/pdf", []byte("%PDF-"))
+	if !errors.Is(err, context.Canceled) || requests != 1 || time.Since(start) > 10*time.Second {
+		t.Fatalf("err %v after %d requests and %v", err, requests, time.Since(start))
+	}
+
+	err = numina.Sleep(context.Background(), time.Millisecond)
+	if err != nil {
+		t.Fatalf("a wait that runs out must not fail: %v", err)
+	}
+}
+
 func TestUploadRefusals(t *testing.T) {
 	t.Parallel()
 
 	for name, answer := range map[string]struct {
 		status int
 		body   string
+		want   string
 	}{
-		"refused":  {http.StatusBadRequest, `{"error":"invalid_file"}`},
-		"no scope": {http.StatusForbidden, `{"error":"insufficient_scope"}`},
-		"no id":    {http.StatusCreated, `{"attachment":{}}`},
+		"refused":  {http.StatusBadRequest, `{"error":"invalid_file"}`, "HTTP status 400"},
+		"no scope": {http.StatusForbidden, `{"error":"insufficient_scope"}`, "HTTP status 403"},
+		"no id":    {http.StatusCreated, `{"attachment":{}}`, "named no document"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -139,8 +193,14 @@ func TestUploadRefusals(t *testing.T) {
 				"k",
 				srv.Client(),
 			).UploadToInbox(context.Background(), "a.pdf", "application/pdf", []byte("%PDF-"))
-			if err == nil {
-				t.Fatal("expected an error")
+			if err == nil || !strings.Contains(err.Error(), answer.want) {
+				t.Fatalf("error %v, want one saying %q", err, answer.want)
+			}
+
+			// Numina's free-text message never reaches the error, which the run logs.
+			if strings.Contains(err.Error(), "invalid_file") ||
+				strings.Contains(err.Error(), "insufficient_scope") {
+				t.Fatalf("error %q carries Numina's own message", err)
 			}
 		})
 	}

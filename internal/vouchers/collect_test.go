@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,6 +21,7 @@ var (
 	errDownloadFailed = errors.New("download failed")
 	errTooLarge       = errors.New("too large")
 	errRefused        = errors.New("refused")
+	errFlagFailed     = errors.New("flag failed")
 )
 
 // pdfData is a small but real-looking PDF.
@@ -31,14 +34,17 @@ func pngData() []byte {
 	return append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte("x"), 20<<10)...)
 }
 
+// fakeBox is a mailbox whose emails are oldest first. It answers a query like a JMAP server: at
+// most limit mails, none flagged with a skipped keyword.
 type fakeBox struct {
 	folders   []mail.Mailbox
 	emails    []mail.Email
 	blobs     map[string][]byte
 	failBlob  string
+	failFlag  bool
 	flagged   map[string]string
 	queriedIn string
-	skipped   string
+	skipped   []string
 }
 
 func newBox(emails ...mail.Email) *fakeBox {
@@ -49,26 +55,49 @@ func newBox(emails ...mail.Email) *fakeBox {
 		emails:    emails,
 		blobs:     map[string][]byte{},
 		failBlob:  "",
+		failFlag:  false,
 		flagged:   map[string]string{},
 		queriedIn: "",
-		skipped:   "",
+		skipped:   nil,
 	}
 }
 
 func (b *fakeBox) Connect(context.Context) error                     { return nil }
 func (b *fakeBox) Mailboxes(context.Context) ([]mail.Mailbox, error) { return b.folders, nil }
-func (b *fakeBox) Query(_ context.Context, mailboxID, skip string, _ int) ([]string, error) {
+func (b *fakeBox) Query(
+	_ context.Context,
+	mailboxID string,
+	skip []string,
+	limit int,
+) ([]string, error) {
 	b.queriedIn, b.skipped = mailboxID, skip
 
 	ids := make([]string, 0, len(b.emails))
 	for _, e := range b.emails {
-		ids = append(ids, e.ID)
+		if len(ids) < limit && !slices.Contains(skip, b.flagged[e.ID]) {
+			ids = append(ids, e.ID)
+		}
 	}
 
 	return ids, nil
 }
-func (b *fakeBox) Emails(context.Context, []string) ([]mail.Email, error) { return b.emails, nil }
+
+func (b *fakeBox) Emails(_ context.Context, ids []string) ([]mail.Email, error) {
+	found := make([]mail.Email, 0, len(ids))
+	for _, e := range b.emails {
+		if slices.Contains(ids, e.ID) {
+			found = append(found, e)
+		}
+	}
+
+	return found, nil
+}
+
 func (b *fakeBox) Flag(_ context.Context, id, keyword string) error {
+	if b.failFlag {
+		return errFlagFailed
+	}
+
 	b.flagged[id] = keyword
 
 	return nil
@@ -123,13 +152,24 @@ func collect(
 ) (vouchers.Summary, string) {
 	t.Helper()
 
+	return collectWith(t, box, inbox, vouchers.Options{Folder: folder, Limit: 100})
+}
+
+func collectWith(
+	t *testing.T,
+	box *fakeBox,
+	inbox *fakeInbox,
+	opt vouchers.Options,
+) (vouchers.Summary, string) {
+	t.Helper()
+
 	var logs bytes.Buffer
 
 	sum, err := vouchers.Collect(
 		context.Background(),
 		box,
 		inbox,
-		vouchers.Options{Folder: folder, Limit: 100},
+		opt,
 		slog.New(slog.NewJSONHandler(&logs, nil)),
 	)
 	if err != nil {
@@ -137,6 +177,17 @@ func collect(
 	}
 
 	return sum, logs.String()
+}
+
+// checkLogsArePrivate fails when the logs carry any of the given mail details.
+func checkLogsArePrivate(t *testing.T, logs string, details ...string) {
+	t.Helper()
+
+	for _, detail := range details {
+		if strings.Contains(logs, detail) {
+			t.Fatalf("logs carry %q: %s", detail, logs)
+		}
+	}
 }
 
 func TestInvoiceIsUploadedAndFlagged(t *testing.T) {
@@ -163,7 +214,8 @@ func TestInvoiceIsUploadedAndFlagged(t *testing.T) {
 		t.Fatalf("uploads %v flagged %v", inbox.uploads, box.flagged)
 	}
 
-	if box.queriedIn != "in" || box.skipped != vouchers.SentKeyword {
+	if box.queriedIn != "in" ||
+		!slices.Equal(box.skipped, []string{vouchers.SentKeyword, vouchers.NotInvoiceKeyword}) {
 		t.Fatalf("queried %q skipping %q", box.queriedIn, box.skipped)
 	}
 }
@@ -189,7 +241,7 @@ func TestInvoiceWordInFileNameIsEnough(t *testing.T) {
 	}
 }
 
-func TestOtherMailIsLeftAlone(t *testing.T) {
+func TestMailWithoutVouchersIsMarkedNotAnInvoice(t *testing.T) {
 	t.Parallel()
 
 	pdf := pdfData()
@@ -219,9 +271,65 @@ func TestOtherMailIsLeftAlone(t *testing.T) {
 	inbox := newInbox()
 
 	sum, _ := collect(t, box, inbox, "")
-	if len(inbox.uploads) != 0 || len(box.flagged) != 0 || sum.Mails != 4 || sum.Invoices != 0 {
-		t.Fatalf("summary %+v uploads %v flagged %v", sum, inbox.uploads, box.flagged)
+	if len(inbox.uploads) != 0 || sum.Mails != 4 || sum.Invoices != 0 || sum.Failed != 0 {
+		t.Fatalf("summary %+v uploads %v", sum, inbox.uploads)
 	}
+
+	for _, id := range []string{"contract", "logo", "fake", "docx"} {
+		if box.flagged[id] != vouchers.NotInvoiceKeyword {
+			t.Errorf("mail %s flagged %q, want %q", id, box.flagged[id], vouchers.NotInvoiceKeyword)
+		}
+	}
+}
+
+func TestNewerInvoiceIsReachedPastMoreThanLimitOtherMails(t *testing.T) {
+	t.Parallel()
+
+	const limit = 3
+
+	pdf := pdfData()
+	emails := make([]mail.Email, 0, limit+2)
+
+	for i := range limit + 1 {
+		emails = append(emails, mail.Email{
+			ID:          "newsletter-" + strconv.Itoa(i),
+			Subject:     "Newsletter",
+			Attachments: []mail.Part{part("news", "application/pdf", "news.pdf", len(pdf))},
+		})
+	}
+
+	box := newBox(append(emails, mail.Email{
+		ID:          "invoice",
+		Subject:     invoiceSubject,
+		Attachments: []mail.Part{part("b1", "application/pdf", "a.pdf", len(pdf))},
+	})...)
+	box.blobs["news"], box.blobs["b1"] = pdf, pdf
+	inbox := newInbox()
+	opt := vouchers.Options{Folder: "", Limit: limit}
+
+	// The first run fills its window with other mail; the second must still reach the invoice.
+	first, _ := collectWith(t, box, inbox, opt)
+	second, _ := collectWith(t, box, inbox, opt)
+
+	if first.Mails != limit || first.Invoices != 0 || second.Mails != 2 || second.Invoices != 1 ||
+		box.flagged["invoice"] != vouchers.SentKeyword ||
+		strings.Join(inbox.uploads, ",") != "a.pdf|application/pdf" {
+		t.Fatalf("runs %+v, %+v uploads %v flagged %v", first, second, inbox.uploads, box.flagged)
+	}
+}
+
+func TestFailedNotAnInvoiceMarkCountsAsFailedMail(t *testing.T) {
+	t.Parallel()
+
+	box := newBox(mail.Email{ID: "mail-1", Subject: "Newsletter", Attachments: nil})
+	box.failFlag = true
+
+	sum, logs := collect(t, box, newInbox(), "")
+	if sum.Failed != 1 || sum.Mails != 1 {
+		t.Fatalf("summary %+v", sum)
+	}
+
+	checkLogsArePrivate(t, logs, "mail-", "Newsletter")
 }
 
 func TestReceiptImageIsUploadedButLogoIsSkipped(t *testing.T) {
@@ -251,17 +359,22 @@ func TestFailureLeavesMailUnflaggedForTheNextRun(t *testing.T) {
 
 	for name, setup := range map[string]func(*fakeBox, *fakeInbox){
 		"upload":   func(_ *fakeBox, i *fakeInbox) { i.fail = true },
-		"download": func(b *fakeBox, _ *fakeInbox) { b.failBlob = "b2" },
+		"download": func(b *fakeBox, _ *fakeInbox) { b.failBlob = "blob-2" },
+		"flag":     func(b *fakeBox, _ *fakeInbox) { b.failFlag = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			pdf := pdfData()
-			box := newBox(mail.Email{ID: "m1", Subject: invoiceSubject, Attachments: []mail.Part{
-				part("b1", "application/pdf", "a.pdf", len(pdf)),
-				part("b2", "application/pdf", "b.pdf", len(pdf)),
-			}})
-			box.blobs["b1"], box.blobs["b2"] = pdf, pdf
+			box := newBox(mail.Email{
+				ID:      "mail-1",
+				Subject: invoiceSubject,
+				Attachments: []mail.Part{
+					part("blob-1", "application/pdf", "a.pdf", len(pdf)),
+					part("blob-2", "application/pdf", "b.pdf", len(pdf)),
+				},
+			})
+			box.blobs["blob-1"], box.blobs["blob-2"] = pdf, pdf
 			inbox := newInbox()
 			setup(box, inbox)
 
@@ -270,9 +383,7 @@ func TestFailureLeavesMailUnflaggedForTheNextRun(t *testing.T) {
 				t.Fatalf("summary %+v flagged %v", sum, box.flagged)
 			}
 
-			if strings.Contains(logs, "a.pdf") || strings.Contains(logs, invoiceSubject) {
-				t.Fatal("logs must carry neither file names nor subjects")
-			}
+			checkLogsArePrivate(t, logs, "mail-", "blob-", "a.pdf", "b.pdf", invoiceSubject)
 		})
 	}
 }
