@@ -55,14 +55,14 @@ jobs:
             exit 1
           fi
           version="${RELEASE_TAG#v}"
-          identity="https://github.com/${GITHUB_WORKFLOW_REF}"
+          identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
           issuer="https://token.actions.githubusercontent.com"
           printf '%s' "$GHCR_TOKEN" | cosign login ghcr.io --username "$GHCR_USER" --password-stdin
           printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io --username "$GHCR_USER" --password-stdin
 
           # The image, for both architectures. setup-ko points KO_DOCKER_REPO at this repository.
           image=$(ko build . --bare --tags "$version" --platform linux/amd64,linux/arm64 \
-            --image-label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}")
+            --image-label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}")
           digest="${image##*@}"
           if [[ "${image%%@*}" != "ghcr.io/devantler-tech/bookkeeper:${version}" ]] ||
             [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then

@@ -1,0 +1,3 @@
+# lychee checks every URL it finds. This one is the GitHub Actions OIDC token issuer that cosign
+# verifies signatures against in .github/workflows/publish.yaml: an identity, not a web page.
+^https://token\.actions\.githubusercontent\.com/?$
