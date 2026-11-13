@@ -40,7 +40,7 @@ caught by Numina's own missing-voucher reminder.
 ## Inputs
 
 | Value                  | Meaning                                                                                                                                                    | Default                           |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+|------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
 | `mail.url`             | Base URL of a [JMAP](https://jmap.io) server, HTTPS only                                                                                                   | required                          |
 | `mail.user`            | The mailbox your suppliers send invoices to                                                                                                                | required                          |
 | `mail.folder`          | Folder to read; empty means the inbox                                                                                                                      | `""`                              |
