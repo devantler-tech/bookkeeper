@@ -426,17 +426,23 @@ func TestDuplicateCountsAndFlags(t *testing.T) {
 	}
 }
 
+// bilagFolder and bilagID name the folder the folder tests read.
+const (
+	bilagFolder = "Bilag"
+	bilagID     = "bilag"
+)
+
 func TestNamedFolder(t *testing.T) {
 	t.Parallel()
 
 	box := newBox()
 	box.folders = append(
 		box.folders,
-		mail.Mailbox{ID: "bilag", Name: "Bilag", ParentID: nil, Role: nil},
+		mail.Mailbox{ID: bilagID, Name: bilagFolder, ParentID: nil, Role: nil},
 	)
-	collect(t, box, newInbox(), "Bilag")
+	collect(t, box, newInbox(), bilagFolder)
 
-	if box.queriedIn != "bilag" {
+	if box.queriedIn != bilagID {
 		t.Fatalf("queried %q", box.queriedIn)
 	}
 
@@ -449,6 +455,34 @@ func TestNamedFolder(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("a missing folder must stop the run")
+	}
+}
+
+func TestAmbiguousFolderStopsTheRun(t *testing.T) {
+	t.Parallel()
+
+	parent := "archive"
+	box := newBox()
+	box.folders = append(
+		box.folders,
+		mail.Mailbox{ID: bilagID, Name: bilagFolder, ParentID: nil, Role: nil},
+		mail.Mailbox{ID: "old-bilag", Name: bilagFolder, ParentID: &parent, Role: nil},
+	)
+	inbox := newInbox()
+
+	_, err := vouchers.Collect(
+		context.Background(),
+		box,
+		inbox,
+		vouchers.Options{Folder: bilagFolder, Limit: 1, Since: firstDay()},
+		slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+	)
+	if err == nil || box.queriedIn != "" || len(inbox.uploads) != 0 {
+		t.Fatalf(
+			"two folders with one name must stop the run before reading mail: err %v queried %q",
+			err,
+			box.queriedIn,
+		)
 	}
 }
 

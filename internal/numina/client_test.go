@@ -205,3 +205,72 @@ func TestUploadRefusals(t *testing.T) {
 		})
 	}
 }
+
+func TestRetryAfterKeepsTheServerDelay(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	httpDate := func(after time.Duration) string { return now.Add(after).Format(http.TimeFormat) }
+
+	for header, want := range map[string]struct {
+		wait  time.Duration
+		retry bool
+	}{
+		"2":                        {2 * time.Second, true},
+		"60":                       {time.Minute, true},
+		"120":                      {0, false},
+		httpDate(30 * time.Second): {30 * time.Second, true},
+		httpDate(2 * time.Minute):  {0, false},
+		httpDate(-time.Minute):     {0, true},
+		"":                         {5 * time.Second, true},
+		"soon":                     {5 * time.Second, true},
+		"-3":                       {5 * time.Second, true},
+	} {
+		t.Run(header, func(t *testing.T) {
+			t.Parallel()
+
+			wait, retry := numina.RetryAfter(header, now)
+			if wait != want.wait || retry != want.retry {
+				t.Fatalf(
+					"Retry-After %q: got %v %v, want %v %v",
+					header,
+					wait,
+					retry,
+					want.wait,
+					want.retry,
+				)
+			}
+		})
+	}
+}
+
+func TestLongRetryAfterStopsInsteadOfRetryingEarly(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		calls++
+
+		writer.Header().Set("Retry-After", "120")
+		writer.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	client := numina.New(srv.URL, "k", srv.Client())
+	client.SetSleep(func(context.Context, time.Duration) error {
+		t.Error("a wait longer than one run honours must not be shortened")
+
+		return nil
+	})
+
+	_, err := client.UploadToInbox(
+		context.Background(),
+		"a.pdf",
+		"application/pdf",
+		[]byte("%PDF-"),
+	)
+	if err == nil || !strings.Contains(err.Error(), "429") || calls != 1 {
+		t.Fatalf("err %v calls %d", err, calls)
+	}
+}

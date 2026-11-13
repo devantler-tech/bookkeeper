@@ -26,9 +26,10 @@ const (
 	maxAnswerBytes = 1 << 20
 	// maxRateLimitRetries is how often a rate-limited upload is tried again.
 	maxRateLimitRetries = 3
-	// maxRetryAfterSeconds is the longest Retry-After wait honoured, in whole seconds.
-	maxRetryAfterSeconds = 60
-	// defaultRetryAfter is the wait when Retry-After is missing, invalid or too long.
+	// maxRetryAfter is the longest Retry-After wait one run honours; a longer one stops the upload
+	// and the next run retries it.
+	maxRetryAfter = 60 * time.Second
+	// defaultRetryAfter is the wait when Retry-After is missing or unreadable.
 	defaultRetryAfter = 5 * time.Second
 )
 
@@ -90,8 +91,9 @@ func (c *Client) UploadToInbox(
 			return UploadResult{}, err
 		}
 
-		if got.status == http.StatusTooManyRequests && attempt < maxRateLimitRetries {
-			err = c.sleep(ctx, retryAfter(got.retryAfter))
+		wait, retry := retryAfter(got.retryAfter, time.Now())
+		if got.status == http.StatusTooManyRequests && attempt < maxRateLimitRetries && retry {
+			err = c.sleep(ctx, wait)
 			if err != nil {
 				return UploadResult{}, err
 			}
@@ -209,11 +211,33 @@ func sleep(ctx context.Context, wait time.Duration) error {
 	}
 }
 
-func retryAfter(header string) time.Duration {
-	seconds, err := strconv.Atoi(strings.TrimSpace(header))
-	if err == nil && seconds > 0 && seconds <= maxRetryAfterSeconds {
-		return time.Duration(seconds) * time.Second
+// retryAfter reads a Retry-After header, as delay seconds or an HTTP date (RFC 9110 section
+// 10.2.3). It returns false when Numina asks for a longer wait than one run honours, so the upload
+// stops instead of retrying early. A missing or unreadable header waits defaultRetryAfter.
+func retryAfter(header string, now time.Time) (time.Duration, bool) {
+	wait, ok := parseRetryAfter(strings.TrimSpace(header), now)
+
+	switch {
+	case !ok:
+		return defaultRetryAfter, true
+	case wait > maxRetryAfter:
+		return 0, false
+	default:
+		return wait, true
+	}
+}
+
+// parseRetryAfter returns the wait a Retry-After value names, and false when it names none.
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	seconds, err := strconv.Atoi(value)
+	if err == nil {
+		return time.Duration(seconds) * time.Second, seconds >= 0
 	}
 
-	return defaultRetryAfter
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+
+	return max(at.Sub(now), 0), true
 }

@@ -39,8 +39,9 @@ const (
 )
 
 var (
-	errNoInbox  = errors.New("the mail account has no inbox")
-	errNoFolder = errors.New("the mail account has no folder with the name --folder gives")
+	errNoInbox         = errors.New("the mail account has no inbox")
+	errNoFolder        = errors.New("the mail account has no folder with the name --folder gives")
+	errAmbiguousFolder = errors.New("more than one folder has the name --folder gives")
 )
 
 // Mailbox is what the collector needs from a mail server.
@@ -263,23 +264,40 @@ func looksLikeInvoice(message mail.Email) bool {
 	return false
 }
 
+// findFolder returns the inbox when name is empty, and otherwise the one folder called name.
+// JMAP keeps names unique only within a parent, so two folders with the name are refused rather
+// than guessing which one is meant.
 func findFolder(folders []mail.Mailbox, name string) (string, error) {
-	for _, folder := range folders {
-		if name == "" && folder.Role != nil && *folder.Role == "inbox" {
-			return folder.ID, nil
-		}
-
-		if name != "" && folder.Name == name {
-			return folder.ID, nil
-		}
-	}
-
 	if name == "" {
+		for _, folder := range folders {
+			if folder.Role != nil && *folder.Role == "inbox" {
+				return folder.ID, nil
+			}
+		}
+
 		return "", errNoInbox
 	}
 
-	// The folder's name can name a supplier, so it never reaches the log.
-	return "", errNoFolder
+	match := ""
+
+	for _, folder := range folders {
+		if folder.Name != name {
+			continue
+		}
+
+		if match != "" {
+			return "", errAmbiguousFolder
+		}
+
+		match = folder.ID
+	}
+
+	if match == "" {
+		// The folder's name can name a supplier, so it never reaches the log.
+		return "", errNoFolder
+	}
+
+	return match, nil
 }
 
 // extension returns the extension a file of an accepted type gets, and false for any type

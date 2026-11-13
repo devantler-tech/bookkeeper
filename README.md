@@ -39,16 +39,16 @@ caught by Numina's own missing-voucher reminder.
 
 ## Inputs
 
-| Value | Meaning | Default |
-|---|---|---|
-| `mail.url` | Base URL of a [JMAP](https://jmap.io) server, HTTPS only | required |
-| `mail.user` | The mailbox your suppliers send invoices to | required |
-| `mail.folder` | Folder to read; empty means the inbox | `""` |
-| `existingSecret.name` | Secret holding the keys `mail-password` and `numina-api-key` | required |
-| `schedule`, `timeZone` | When it runs | `15 6 * * *`, `Europe/Copenhagen` |
-| `since` | Only mail received on or after this day (`YYYY-MM-DD`) is read; set it to the first day of the books in Numina | required |
-| `limit` | The most mails one run reads, 1–500 | `100` |
-| `image.digest` | Pin the exact image | `""` |
+| Value                  | Meaning                                                                                                        | Default                           |
+|------------------------|----------------------------------------------------------------------------------------------------------------|-----------------------------------|
+| `mail.url`             | Base URL of a [JMAP](https://jmap.io) server, HTTPS only                                                       | required                          |
+| `mail.user`            | The mailbox your suppliers send invoices to                                                                    | required                          |
+| `mail.folder`          | Folder to read; empty means the inbox                                                                          | `""`                              |
+| `existingSecret.name`  | Secret holding the keys `mail-password` and `numina-api-key`                                                   | required                          |
+| `schedule`, `timeZone` | When it runs                                                                                                   | `15 6 * * *`, `Europe/Copenhagen` |
+| `since`                | Only mail received on or after this day (`YYYY-MM-DD`) is read; set it to the first day of the books in Numina | required                          |
+| `limit`                | The most mails one run reads, 1–500                                                                            | `100`                             |
+| `image.digest`         | Pin the exact image                                                                                            | `""`                              |
 
 Without Kubernetes:
 

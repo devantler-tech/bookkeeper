@@ -14,3 +14,8 @@ func (c *Client) SetSleep(sleep func(ctx context.Context, wait time.Duration) er
 func Sleep(ctx context.Context, wait time.Duration) error {
 	return sleep(ctx, wait)
 }
+
+// RetryAfter exposes how a Retry-After header is read to the external tests.
+func RetryAfter(header string, now time.Time) (time.Duration, bool) {
+	return retryAfter(header, now)
+}
