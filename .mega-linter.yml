@@ -1,0 +1,29 @@
+APPLY_FIXES: all
+FLAVOR_SUGGESTIONS: false
+
+FILTER_REGEX_EXCLUDE: megalinter-reports/.*
+IGNORE_GITIGNORED_FILES: true
+EXCLUDED_DIRECTORIES:
+  - .git
+  - megalinter-reports
+  - report
+  - .github/prompts
+  - .jscpd
+
+DISABLE_LINTERS:
+  # MegaLinter's image ships a fixed Go toolchain and runs it with GOTOOLCHAIN=local, so once
+  # go.mod's `go` directive is newer than that toolchain golangci-lint cannot load the module
+  # and fails with a toolchain error instead of lint findings. Nothing is lost: the dedicated
+  # golangci-lint job in devantler-tech/.github's validate-go-project.yaml runs it after
+  # actions/setup-go installs the toolchain go.mod asks for.
+  - GO_GOLANGCI_LINT
+  - GO_REVIVE
+  - SPELL_CSPELL
+
+MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: .github/prompts
+
+# Allow zizmor to use GITHUB_TOKEN so its online audits (e.g. artipacked) can reach the
+# GitHub API. Without this, megalinter strips GITHUB_TOKEN and zizmor aborts with
+# "fatal: no audit was performed", failing the whole megalinter run.
+ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
+  - GITHUB_TOKEN

@@ -1,0 +1,31 @@
+---
+name: 🗂️ Stale Issue Triage
+
+on:
+  pull_request:
+    paths: [.github/workflows/stale-issues.yaml]
+  schedule:
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Preview without changing issues or saved progress.
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: stale-issues-caller
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    # Keep portfolio automation disabled in external template copies.
+    if: ${{ github.repository_owner == 'devantler-tech' }}
+    uses: devantler-tech/.github/.github/workflows/triage-stale-issues.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78 # v21.1.1
+    permissions:
+      issues: write
+      actions: write
+    with:
+      dry-run: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' && inputs.dry-run }}

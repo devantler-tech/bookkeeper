@@ -1,0 +1,20 @@
+{
+  "version": "0.2",
+  "words": [
+    "buildx",
+    "depguard",
+    "devantler",
+    "exhaustruct",
+    "gofmt",
+    "gofumpt",
+    "goimports",
+    "golangci",
+    "golines",
+    "goreleaser",
+    "gostd",
+    "megalinter",
+    "swaggo",
+    "testutils",
+    "vektra"
+  ]
+}
