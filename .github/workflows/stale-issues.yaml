@@ -5,7 +5,7 @@ on:
   pull_request:
     paths: [.github/workflows/stale-issues.yaml]
   schedule:
-    - cron: "37 4 * * *"
+    - cron: "49 4 * * *"
   workflow_dispatch:
     inputs:
       dry-run:
