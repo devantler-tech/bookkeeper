@@ -38,7 +38,7 @@ const (
 
 const usage = `Usage: bookkeeper collect-vouchers --mail-url <https://mail.example.com> --mail-user <user>
 	--mail-password-file <path> --numina-token-file <path> --since <YYYY-MM-DD> [flags]
-       bookkeeper sync-stripe-fees --stripe-key-file <path> --since <YYYY-MM-DD> --until <YYYY-MM-DD> [flags]`
+bookkeeper sync-stripe-fees --stripe-key-file <path> --since <YYYY-MM-DD> --until <YYYY-MM-DD> [flags]`
 
 var (
 	errURLRequired      = errors.New("is required")
