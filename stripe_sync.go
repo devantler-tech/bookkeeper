@@ -61,6 +61,10 @@ func runStripeFees(
 	log *slog.Logger,
 ) int {
 	opts, err := stripeFlags(args, output)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+
 	if err != nil {
 		log.Error("stripe sync refused", "error", err.Error())
 
@@ -138,6 +142,10 @@ func stripeFlags(args []string, output io.Writer) (stripeOptions, error) {
 	flags.IntVar(&opts.feeAccount, "stripe-fee-account", 0, "Numina Stripe fee expense account")
 
 	err := flags.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		return opts, flag.ErrHelp
+	}
+
 	if err != nil || flags.NArg() != 0 || opts.keyFile == "" {
 		return opts, errStripeFlags
 	}

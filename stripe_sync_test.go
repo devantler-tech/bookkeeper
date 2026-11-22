@@ -139,6 +139,14 @@ func (fixture *stripeFeeFixture) createDraft(t *testing.T) http.HandlerFunc {
 	}
 }
 
+func TestStripeFeeSyncHelp(t *testing.T) {
+	t.Parallel()
+
+	assertFeeRun(
+		t, newHTTPClient(), []string{"sync-stripe-fees", "--help"}, 0, "Usage of sync-stripe-fees:",
+	)
+}
+
 func TestStripeFeeSyncDryRunAndReplay(t *testing.T) {
 	t.Parallel()
 
