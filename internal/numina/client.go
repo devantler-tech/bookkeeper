@@ -1,6 +1,4 @@
-// Package numina uploads documents to a company's inbox in Numina (https://numina.app), a
-// registered Danish bookkeeping system. A Client has no path that books, changes or deletes
-// anything in the books.
+// Package numina uploads vouchers and prepares fee drafts in Numina, a Danish bookkeeping system.
 package numina
 
 import (
