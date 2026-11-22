@@ -53,8 +53,8 @@ type entryConfirmation struct {
 }
 
 type journalAnswer struct {
-	status   int
-	body     []byte
+	answer
+
 	replayed bool
 }
 
@@ -118,9 +118,18 @@ func (c *Client) CreateStripeFeeDraft(
 		return confirmedDraft(answer, payload.Reference)
 	case http.StatusConflict:
 		return c.confirmExisting(ctx, payload.Reference)
-	default:
-		return false, fmt.Errorf("%w: HTTP %d", errDraft, answer.status)
+	case http.StatusUnprocessableEntity:
+		var refusal struct {
+			Code string `json:"error"`
+		}
+
+		err = json.Unmarshal(answer.body, &refusal)
+		if err == nil && refusal.Code == "idempotency_key_reused" {
+			return c.confirmExisting(ctx, payload.Reference)
+		}
 	}
+
+	return false, fmt.Errorf("%w: HTTP %d", errDraft, answer.status)
 }
 
 func confirmedDraft(answer journalAnswer, reference string) (bool, error) {
@@ -191,6 +200,30 @@ func (c *Client) journalRequest(
 	body []byte,
 	key string,
 ) (journalAnswer, error) {
+	for attempt := 0; ; attempt++ {
+		got, err := c.sendJournalRequest(ctx, method, path, body, key)
+		if err != nil {
+			return journalAnswer{}, err
+		}
+
+		wait, retry := retryAfter(got.retryAfter, time.Now())
+		if got.status != http.StatusTooManyRequests || attempt >= maxRateLimitRetries || !retry {
+			return got, nil
+		}
+
+		err = c.sleep(ctx, wait)
+		if err != nil {
+			return journalAnswer{}, err
+		}
+	}
+}
+
+func (c *Client) sendJournalRequest(
+	ctx context.Context,
+	method, path string,
+	body []byte,
+	key string,
+) (journalAnswer, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return journalAnswer{}, errDraft
@@ -217,8 +250,11 @@ func (c *Client) journalRequest(
 	}
 
 	return journalAnswer{
-		status:   resp.StatusCode,
-		body:     data,
+		answer: answer{
+			status:     resp.StatusCode,
+			retryAfter: resp.Header.Get("Retry-After"),
+			body:       data,
+		},
 		replayed: resp.Header.Get("Idempotent-Replayed") == "true",
 	}, nil
 }
