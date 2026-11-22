@@ -1,76 +1,130 @@
-# .templatesyncignore — files an INSTANCE created from this template OWNS.
+# .templatesyncignore — files Bookkeeper OWNS, which template-sync never overwrites.
 #
 # Same syntax as .gitignore. The weekly template-sync workflow
 # (devantler-tech/.github .github/workflows/template-sync.yaml, using
-# AndreasAugustin/actions-template-sync) is skipped in this template repo itself
-# and runs in every instance created from it — opening a PR that brings template
-# changes downstream. It only ever touches files that exist in this template, and
-# it SKIPS anything matched here, so an instance's tailored files are never
-# clobbered by an upstream sync.
+# AndreasAugustin/actions-template-sync) opens a PR that brings changes from the
+# application template (the repository .github/workflows/template-sync.yaml names)
+# into Bookkeeper. It only ever touches files that exist in the template, and it
+# SKIPS anything matched here.
 #
-# Everything NOT listed here is TEMPLATE-OWNED shared plumbing kept current in
-# every instance by template-sync — change it upstream in
-# devantler-tech/go-template, never by editing it in an instance. Template-owned
-# plumbing includes .github/workflows/{ci,cd,release,template-sync,todos}.yaml,
-# the shared lint configs (.mega-linter.yml, .pre-commit-config.yaml,
-# .editorconfig, .gitattributes — NOT .golangci.yml, which instances own; see
-# below), the mockery pre-commit hook scripts, and the
-# CLAUDE.md/GEMINI.md shims. (ci.yaml is deliberately template-owned for
-# generated projects — it calls the shared Go validator and aggregates its
-# result without relying on organization workflow injection. If an instance
-# replaces that callsite with its own pipeline, add `.github/workflows/ci.yaml`
-# here so a later sync cannot revert it.)
+# Everything NOT listed here is TEMPLATE-OWNED and kept current by template-sync —
+# change it upstream in the application template, never by editing it here.
+# Bookkeeper receives .github/workflows/{release,template-sync,stale-issues,codeql}.yaml,
+# .coderabbit.yaml, zizmor.yml and CLAUDE.md. It owns the rest of what the template
+# ships: its CI and CD, its lint configuration, its code and the template's tenant
+# plumbing, which a Bookkeeper that is not a publish-app tenant does not use.
+#
+# merge-template-ignore-entries is on, so each sync ADDS the template's entries this
+# list lacks: a file the template later marks as application-owned stays Bookkeeper's.
+# To receive a file the template lists, add the line `!<entry>` here instead.
 
-# --- Identity & docs (instance-specific) ---
+# --- Identity & docs (Bookkeeper's own) ---
 AGENTS.md
 README.md
 CONTRIBUTING.md
 LICENSE
 .github/CODEOWNERS
 .claude/skills/maintain/SKILL.md
+# docs/ is Bookkeeper's own. The template's docs/REFERENCE.md describes the template's
+# scaffold and tenant publishing, which Bookkeeper does not use, and its long table rows
+# exceed the 400-character line limit of Bookkeeper's Markdown lint.
+docs/
 
-# --- Release / dependency / lint config the instance tailors ---
-# .mega-linter.yml is instance-owned here: it excludes the Helm chart templates from the YAML
-# linters, which the template has no chart to need.
-.mega-linter.yml
-# .golangci.yml is instance-owned on purpose: its depguard rule is a strict
-# allowlist (stdlib + OpenFeature), so any real project must extend it — a
-# synced overwrite would clobber the project's dependency allowlist.
+# --- CI, release and dependency config Bookkeeper tailors ---
+# ci.yaml calls the shared Go validator. Bookkeeper's cd.yaml releases its binaries with
+# GoReleaser and publish.yaml publishes its signed image and chart; the template's cd.yaml
+# is the platform-tenant publish path instead.
+.github/workflows/ci.yaml
+.github/workflows/cd.yaml
+.github/workflows/publish.yaml
+.github/workflows/todos.yaml
+# The template's Dependabot file is .yml; Bookkeeper's is .yaml.
+.github/dependabot.yml
+.github/dependabot.yaml
 .releaserc
 .goreleaser.yaml
+.ko.yaml
 .gitignore
-.github/dependabot.yaml
+# .golangci.yml is Bookkeeper's on purpose: its depguard rule is a strict allowlist,
+# which Bookkeeper extends with its own dependencies.
 .golangci.yml
 cspell.json
+Dockerfile
+# No GitHub Copilot features in this repository; never restore the agent setup workflow.
+.github/workflows/copilot-setup-steps.yml
 
-# --- The instance's own Go module and code ---
-# The module path, entrypoint, and packages are repointed by
-# scripts/rename-placeholders.sh at scaffold time and evolve with the instance;
-# a sync must never clobber them. pkg/ is ignored WHOLESALE (not just the
-# starter packages) so a template file added later at a path the instance
-# already uses can never touch instance code.
+# --- Lint configuration ---
+# Bookkeeper's .mega-linter.yml stands alone: it excludes the Helm chart templates from
+# the YAML linters and does not extend the template's shared base, and the shared Go
+# validator runs MegaLinter, not the template's lint workflow. Without its own yamllint
+# or markdownlint file, MegaLinter's bundled rules apply. Receiving the template's copies
+# would change what lint enforces on every file; adopting the shared base is a change of
+# its own.
+.mega-linter.yml
+.github/mega-linter.base.yml
+.github/workflows/lint.yaml
+.yamllint.yml
+.markdownlint.json
+
+# --- The application's overlays on shared configuration ---
+.github/codeql/codeql-config.yml
+
+# --- Platform-tenant plumbing (Bookkeeper does not publish through publish-app) ---
+# The same files the template's scaffold removes and lists without --tenancy, and the
+# fixture their tests read. Remove these lines, and copy the files from the template, to
+# become a tenant.
+deploy/
+renovate.json
+scripts/publish-pin-approved.sh
+scripts/publish-pin-approved.test.sh
+scripts/workflow-caller-pin-contract.test.sh
+scripts/fixtures/own-publisher.yaml
+
+# --- Bookkeeper's own application ---
+# Ignored wholesale, so a template file added later at a path Bookkeeper already uses
+# can never touch its code.
 go.mod
 go.sum
 main.go
 cmd/
 internal/
 pkg/
+charts/
 
-# --- Scaffolding machinery (template-only; dead code in a live instance) ---
-# These run when a NEW repo is created from this template ("use this template"
-# copies everything, so scaffolding still arrives at creation time). A
-# scaffolded instance never runs them again — ignoring them stops template-sync
-# (re-)introducing them downstream, so an instance that deletes them stays clean.
+# --- Formerly synced from go-template, Bookkeeper's own since the move ---
+# go-template, Bookkeeper's first template, kept these current. The application template
+# has no copy, so they are Bookkeeper's now; listing them keeps a same-named template file
+# from replacing them.
+.editorconfig
+.gitattributes
+.pre-commit-config.yaml
+.github/scripts/
+GEMINI.md
+scripts/validate-agent-shims.test.sh
+
+# --- Scaffolding machinery (template-only; dead code in a live application) ---
 scripts/rename-placeholders.sh
 scripts/rename-placeholders.test.sh
-scripts/go-floor.test.sh
+scripts/agent-instructions.test.sh
+scripts/workflow-caller-contract.test.sh
+scripts/tenant-ci-contract.test.sh
+scripts/pod-security-admission.test.sh
+scripts/pod-security-admission-contract.test.sh
+scripts/tenant-rbac.test.sh
+scripts/tenant-rbac-contract.test.sh
+scripts/platform-tenant-envelope.test.sh
+scripts/platform-tenant-envelope-contract.test.sh
+scripts/platform-network-floor.test.sh
+scripts/platform-network-floor-contract.test.sh
+scripts/platform-vpa-floor.test.sh
+scripts/platform-vpa-floor-contract.test.sh
 .github/workflows/validate-scaffold.yaml
-.github/scripts/ci-contract.test.sh
 
-# --- This ignore-list itself (the instance curates its own ownership) ---
+# --- The scaffold and its stacks (template-only) ---
+stacks/
+scripts/scaffold.sh
+scripts/scaffold.test.sh
+.github/workflows/validate-stacks.yaml
+
+# --- This ignore-list itself (Bookkeeper curates its own ownership) ---
 .templatesyncignore
-
-# --- Not used: no GitHub Copilot features in this repository ---
-# The template ships a Copilot coding-agent setup workflow; this instance
-# deleted it, and listing it here stops a sync bringing it back.
-.github/workflows/copilot-setup-steps.yml
