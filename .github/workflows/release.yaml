@@ -1,24 +1,19 @@
-name: Release
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+name: 🎉 Release
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  id-token: write
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
 
 jobs:
   release:
+    # Skipped in the template repo itself; runs in every application created from it.
+    # The template is matched by its repository ID, which survives renames.
+    if: github.repository_id != '1253884448'
     uses: devantler-tech/.github/.github/workflows/create-release.yaml@cc156a3693019fdbe9817c46f1a91cd50a124695 # v21.7.3
     with:
-      # Refuse every outbound host except the release jobs' measured allow-list
-      # (devantler-tech/.github#912) — in this template repository only. Generated projects
-      # own their release configuration (an asset upload needs another host), so they stay in
-      # audit mode until they opt in themselves.
-      block-egress: ${{ github.repository == 'devantler-tech/go-template' }}
+      disable-issue-side-effects: true
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
