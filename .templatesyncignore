@@ -79,6 +79,8 @@ scripts/publish-pin-approved.sh
 scripts/publish-pin-approved.test.sh
 scripts/workflow-caller-pin-contract.test.sh
 scripts/fixtures/own-publisher.yaml
+# The queue check the template's own ci.yaml runs against its tenant cd.yaml publication queue.
+scripts/validate-workflow-queues.sh
 
 # --- Bookkeeper's own application ---
 # Ignored wholesale, so a template file added later at a path Bookkeeper already uses
@@ -118,6 +120,8 @@ scripts/platform-network-floor.test.sh
 scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh
 scripts/platform-vpa-floor-contract.test.sh
+# Reads the template-only validate-stacks.yaml; the template runs it only inside its own CI.
+scripts/validate-workflow-queues.test.sh
 .github/workflows/validate-scaffold.yaml
 
 # --- The scaffold and its stacks (template-only) ---
