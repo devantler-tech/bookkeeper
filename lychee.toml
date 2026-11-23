@@ -1,0 +1,7 @@
+# GitHub's file-page renderer answers hosted link checks with HTTP 503, so a valid
+# github.com/<owner>/<repo>/blob/<ref>/<path> link would fail every lint run. Check the same
+# file through its raw endpoint instead: the link is still verified, and a missing file
+# still fails with 404.
+remap = [
+  '^https://github\.com/([^/]+)/([^/]+)/blob/([^#]+)(#.*)?$ https://raw.githubusercontent.com/$1/$2/$3',
+]
