@@ -70,15 +70,10 @@ Dockerfile
 .github/codeql/codeql-config.yml
 
 # --- Platform-tenant plumbing (Bookkeeper does not publish through publish-app) ---
-# The same files the template's scaffold removes and lists without --tenancy, and the
-# fixture their tests read. Remove these lines, and copy the files from the template, to
-# become a tenant.
+# The same files the template's scaffold removes and lists without --tenancy. Remove these
+# lines, and copy the files from the template, to become a tenant.
 deploy/
 renovate.json
-scripts/publish-pin-approved.sh
-scripts/publish-pin-approved.test.sh
-scripts/workflow-caller-pin-contract.test.sh
-scripts/fixtures/own-publisher.yaml
 # The queue check the template's own ci.yaml runs against its tenant cd.yaml publication queue.
 scripts/validate-workflow-queues.sh
 
