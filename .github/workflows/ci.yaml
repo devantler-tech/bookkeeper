@@ -15,6 +15,7 @@ jobs:
       pull-requests: write # lint summaries; no branch-writing token on candidate runners
       issues: write # lint summaries
       code-quality: write # coverage upload
+      id-token: write # lets the shared Go validation (its signed-fix jobs) prove its identity to the GitHub token broker (ADR 0020)
     with:
       pr-owner: ${{ github.event.pull_request.user.login }}
       # An independent generated project needs no App key for validation.
