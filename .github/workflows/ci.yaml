@@ -9,7 +9,7 @@ permissions: {}
 
 jobs:
   go-validation:
-    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@722d9bd7bd8636a0da9c7a9e63f2e7259e46ede2 # v21.12.8
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@0e02148c251bcd65cfddc1cc7bec49ccce2eea42 # v22.7.0
     permissions:
       contents: read
       pull-requests: write # lint summaries; no branch-writing token on candidate runners
