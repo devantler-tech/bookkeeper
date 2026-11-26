@@ -11,6 +11,6 @@ on:
 
 jobs:
   todos:
-    uses: devantler-tech/.github/.github/workflows/scan-for-todo-comments.yaml@946fff9cb37042f4c26c3342665727e28bd66c01 # v22.3.0
+    uses: devantler-tech/.github/.github/workflows/scan-for-todo-comments.yaml@61d8f70f25d7d5deb8bd914136b329b5a59ff43b # v22.7.4
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
