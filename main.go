@@ -1,5 +1,5 @@
 // Command bookkeeper keeps a Numina company's books moving without AI tokens. Its
-// collect-vouchers command sends supplier invoices from a JMAP mailbox to Numina's inbox.
+// collect-vouchers sends supplier invoices to Numina's inbox. sync-stripe-fees prepares fee drafts.
 package main
 
 import (
@@ -37,7 +37,8 @@ const (
 )
 
 const usage = `Usage: bookkeeper collect-vouchers --mail-url <https://mail.example.com> --mail-user <user>
-	--mail-password-file <path> --numina-token-file <path> --since <YYYY-MM-DD> [flags]`
+	--mail-password-file <path> --numina-token-file <path> --since <YYYY-MM-DD> [flags]
+bookkeeper sync-stripe-fees --stripe-key-file <path> --since <YYYY-MM-DD> --until <YYYY-MM-DD> [flags]`
 
 var (
 	errURLRequired      = errors.New("is required")
@@ -72,6 +73,10 @@ type credentials struct {
 
 func run(ctx context.Context, args []string, output io.Writer, httpClient *http.Client) int {
 	log := slog.New(slog.NewJSONHandler(output, nil))
+	if len(args) > 0 && args[0] == "sync-stripe-fees" {
+		return runStripeFees(ctx, args[1:], output, httpClient, log)
+	}
+
 	if len(args) == 0 || args[0] != "collect-vouchers" {
 		_, _ = fmt.Fprintln(output, usage)
 

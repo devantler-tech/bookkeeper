@@ -5,6 +5,8 @@ Danish bookkeeping system, so the books get their vouchers without anyone forwar
 the mailbox your suppliers already send to and uses no AI: every decision is a fixed rule. Numina's
 own AI then matches each voucher to its bank line.
 
+Bookkeeper can also read Stripe balance activity and prepare Numina drafts for supported fees.
+
 ## Install with Helm
 
 The chart runs it as a daily Kubernetes CronJob. Give it a Secret with the mailbox password and a
@@ -63,3 +65,36 @@ bookkeeper collect-vouchers --mail-url https://mail.example.com --mail-user you@
 - A Numina API key with upload rights (`documents:write`). It cannot book, change or delete anything
   in the books.
 - Egress to the mail server and to `api.numina.app` on port 443.
+
+## Stripe fee drafts
+
+`sync-stripe-fees` reads Stripe’s balance transactions in a UTC window. Start with a
+restricted Stripe sandbox key with balance-transaction read access. Credentials belong in
+secret files. The command displays counts and defaults to a dry run.
+
+```bash
+bookkeeper sync-stripe-fees --stripe-key-file ./stripe-read-key \
+  --since 2026-02-01 --until 2026-03-01
+```
+
+`--until` is exclusive. For a scheduled command, use `--lookback-days` (1–31, including
+the current UTC day) in place of both dates. An overlapping window catches fees that
+become available after a prior run. Use explicit dates for backfills or longer outages.
+The current Helm job runs voucher collection. Schedule Stripe separately with its own
+credentials.
+
+Add `--write-drafts` to send eligible fees to Numina. Set `--numina-token-file` to the
+access token of a registered Numina integration with `journal:read` and `journal:write`,
+`--numina-company-id` to the intended company, and `--stripe-balance-account` and
+`--stripe-fee-account` to its reviewed chart-of-accounts numbers. The credential provider
+must keep the OAuth token file current. Use the sandbox company ID for sandbox Stripe
+data. `--live` explicitly selects live Stripe and requires a live restricted key.
+
+Each draft debits expenses and credits Stripe clearing for the fee recorded on a
+settled DKK charge. Stable references make overlapping runs and retries safe. Booked
+and canceled entries keep their references. Review drafts in Numina before booking.
+Payouts, sales, refunds, mixed fees and foreign-currency activity are counted as deferred.
+When importing sales later, account for fees already drafted by this command.
+
+[Stripe balance transactions](https://docs.stripe.com/api/balance_transactions/list) ·
+[Numina journal entries](https://developers.numina.app/api/journal-entries.md)

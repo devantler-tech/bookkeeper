@@ -2,10 +2,10 @@
 
 ## Project overview
 
-`devantler-tech/bookkeeper` sends supplier invoices from a mailbox to
-[Numina](https://numina.app), a registered Danish bookkeeping system. It is one
-Go program with one command, `collect-vouchers`, and a Helm chart that runs it
-as a daily Kubernetes CronJob. Every decision is a fixed rule: no AI, no model
+`devantler-tech/bookkeeper` sends supplier invoices and prepares Stripe fee drafts in
+[Numina](https://numina.app), a registered Danish bookkeeping system. The Helm
+chart runs `collect-vouchers` as a daily Kubernetes CronJob. `sync-stripe-fees`
+is a separate command with separate credentials. Every decision is a fixed rule: no AI, no model
 tokens. The module path is `github.com/devantler-tech/bookkeeper`, and the Go
 version is whatever `go.mod` declares.
 
@@ -17,12 +17,17 @@ the owner. Booking, reconciliation and VAT stay in Numina.
 
 - `main.go` — the CLI: flags, secret files, the HTTP client (no redirects), exit codes.
 - `internal/mail` — a JMAP client limited to reading mail and setting one keyword per call. It refuses any other method and never creates or destroys mail.
-- `internal/numina` — uploads a file to Numina's inbox (`POST /v1/attachments`) with OCR.
+- `internal/numina` — uploads vouchers with OCR and creates explicitly enabled Stripe fee drafts.
+- `internal/stripefees` — reads Stripe balance transactions and validates DKK fee evidence.
 - `internal/vouchers` — the run: find invoice mail, upload its PDF/PNG/JPEG attachments, mark the mail.
 - `charts/bookkeeper` — the Helm chart (CronJob, ServiceAccount, values schema).
 - `CLAUDE.md` / `GEMINI.md` — exact one-line `@AGENTS.md` shims; never copy guidance into them.
 - `.claude/skills/maintain/SKILL.md` — the maintenance skill card; it defers to *Maintenance* below.
-- `.github/workflows/` — `ci.yaml` (required checks), `cd.yaml` (GoReleaser binaries on `v*` tags), `publish.yaml` (on `v*` tags: the ko-built image and the Helm chart to GHCR, both signed keylessly, the chart pinned to the image digest; `.ko.yaml` sets the base image), `release.yaml`, `template-sync.yaml` (weekly sync of template-owned plumbing from the application template, `devantler-tech/platform-tenant-template`, honouring `.templatesyncignore`), `todos.yaml`, `stale-issues.yaml`.
+- `.github/workflows/` — `ci.yaml` runs required checks. On `v*` tags, `cd.yaml` publishes
+  GoReleaser binaries and `publish.yaml` publishes the signed ko image and Helm chart to GHCR.
+  The chart pins the image digest and `.ko.yaml` sets the base image.
+  `template-sync.yaml` syncs template-owned files weekly, honoring `.templatesyncignore`.
+  The directory also includes the release, TODO and stale-issue workflows.
 
 ## Validation
 
@@ -35,17 +40,18 @@ helm lint charts/bookkeeper --values charts/bookkeeper/ci/test-values.yaml
 helm template t charts/bookkeeper --values charts/bookkeeper/ci/test-values.yaml > /dev/null
 ```
 
-Tests use `httptest` servers for JMAP and Numina; they need no network,
-mailbox or Numina account.
+Tests use `httptest` servers for JMAP, Stripe and Numina. Provider accounts are only
+needed for sandbox acceptance.
 
 ## Rules
 
 - **No private data in the repository, issues, PRs or logs.** No supplier
   names, amounts, mail subjects, file names or credentials. The program logs
   counts only; keep it that way.
-- **Never widen what the program can do to mail or the books.** It reads mail
-  and sets one of two hidden keywords (`$bk-sent-to-numina`, `$bk-not-an-invoice`);
-  it uploads to Numina's inbox and nothing else.
+- **Keep the two commands' access separate.** Voucher collection reads mail, sets one
+  of two keywords and uploads vouchers. Stripe sync reads balances with a restricted key.
+  Its Numina access is limited to identifying the company, reading draft references and
+  explicitly enabled fee drafts. Booking and tax review belong in Numina.
 - **Stdlib only.** `.golangci.yml`'s `depguard` allows the standard library and
   this module; adding a dependency needs a stated reason.
 
